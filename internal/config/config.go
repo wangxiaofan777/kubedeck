@@ -2,6 +2,9 @@
 package config
 
 import (
+	"bytes"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -39,15 +42,15 @@ type Config struct {
 // Default 返回内置默认配置。
 func Default() Config {
 	return Config{
-		Addr:           ":8080",
-		LogLevel:       "info",
-		DevClusterName: "local",
-
+		Addr:             ":8080",
+		LogLevel:         "info",
+		DevClusterName:   "local",
 		MasterKeyVersion: 1,
 	}
 }
 
 // Load 按优先级合并配置：先读 KUBEDECK_CONFIG 指向的 YAML（可选），再用环境变量覆盖。
+// 加载完成后执行 Validate；非法配置直接返回错误，由调用方阻止启动。
 func Load() (Config, error) {
 	cfg := Default()
 
@@ -56,7 +59,9 @@ func Load() (Config, error) {
 		if err != nil {
 			return cfg, fmt.Errorf("read config %q: %w", path, err)
 		}
-		if err := yaml.Unmarshal(b, &cfg); err != nil {
+		dec := yaml.NewDecoder(bytes.NewReader(b))
+		dec.KnownFields(true) // 未知键视为错误，避免拼写错误被静默忽略
+		if err := dec.Decode(&cfg); err != nil {
 			return cfg, fmt.Errorf("parse config %q: %w", path, err)
 		}
 	}
@@ -65,7 +70,7 @@ func Load() (Config, error) {
 		cfg.Addr = v
 	}
 	if v := os.Getenv("KUBEDECK_LOG_LEVEL"); v != "" {
-		cfg.LogLevel = strings.ToLower(v)
+		cfg.LogLevel = v
 	}
 	if v := os.Getenv("KUBEDECK_ALLOWED_ORIGINS"); v != "" {
 		cfg.AllowedOrigins = nil
@@ -108,5 +113,69 @@ func Load() (Config, error) {
 		cfg.PreviousMasterKeyVersion = n
 	}
 
+	cfg.Addr = strings.TrimSpace(cfg.Addr)
+	cfg.LogLevel = strings.ToLower(strings.TrimSpace(cfg.LogLevel))
+	cfg.DevClusterName = strings.TrimSpace(cfg.DevClusterName)
+
+	if err := cfg.Validate(); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
+}
+
+// Validate 在监听前校验配置，错误信息必须能定位到具体字段。
+func (c Config) Validate() error {
+	if c.Addr == "" {
+		return errors.New("addr: must not be empty")
+	}
+	switch c.LogLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("log_level: unsupported %q (want debug|info|warn|error)", c.LogLevel)
+	}
+	for _, origin := range c.AllowedOrigins {
+		if strings.TrimSpace(origin) == "*" {
+			return errors.New("allowed_origins: wildcard \"*\" is not allowed because credentials are enabled")
+		}
+	}
+	if c.DevKubeconfig != "" && c.DevClusterName == "" {
+		return errors.New("dev_cluster_name: required when dev_kubeconfig is set")
+	}
+
+	if c.MasterKeyVersion < 1 {
+		return errors.New("master_key_version: must be >= 1")
+	}
+	if c.MasterKey == "" && c.MasterKeyVersion != 1 {
+		return errors.New("master_key_version: set without master_key")
+	}
+	if c.MasterKey != "" {
+		if err := validateMasterKey(c.MasterKey); err != nil {
+			return fmt.Errorf("master_key: %w", err)
+		}
+	}
+	if c.PreviousMasterKey != "" {
+		if err := validateMasterKey(c.PreviousMasterKey); err != nil {
+			return fmt.Errorf("previous_master_key: %w", err)
+		}
+		if c.PreviousMasterKeyVersion < 1 {
+			return errors.New("previous_master_key_version: required when previous_master_key is set")
+		}
+		if c.PreviousMasterKeyVersion == c.MasterKeyVersion {
+			return errors.New("previous_master_key_version: must differ from master_key_version")
+		}
+	} else if c.PreviousMasterKeyVersion != 0 {
+		return errors.New("previous_master_key: required when previous_master_key_version is set")
+	}
+	return nil
+}
+
+func validateMasterKey(value string) error {
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(value))
+	if err != nil {
+		return errors.New("must be base64 encoded")
+	}
+	if len(key) != 32 {
+		return fmt.Errorf("must decode to 32 bytes, got %d", len(key))
+	}
+	return nil
 }

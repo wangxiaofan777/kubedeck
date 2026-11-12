@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-KubeDeck（集群驾驶舱）是一个多集群 Kubernetes Web 管理控制台。**当前处于设计完成、尚未编码的状态**。
+KubeDeck（集群驾驶舱）是一个多集群 Kubernetes Web 管理控制台。**当前已完成服务端骨架、数据层、只读控制台与工程基线；认证、写操作、实时推送尚未实现**（进度以 `openspec/changes/add-kubedeck-mvp/tasks.md` 为准）。
 
 ## 先读什么（按顺序）
 
@@ -19,6 +19,7 @@ KubeDeck（集群驾驶舱）是一个多集群 Kubernetes Web 管理控制台�
 
 本项目使用 OpenSpec（`openspec` CLI 已安装）做规格驱动开发。
 
+- **所有改动都要先有提案**：在 `openspec/changes/<change>/` 下创建 proposal/design/tasks；行为变化还要写 spec，纯重构/工具链变更也要有 proposal 与 tasks（无行为变化时在 `.openspec.yaml` 声明 `skip_specs: true`）
 - 任何**行为变化**，先改 `openspec/changes/<change>/specs/` 下的规格，再改代码
 - 规格用 `### Requirement:` + `#### Scenario:`（四个 `#`），需求用 SHALL/MUST
 - 写完执行 `openspec validate <change> --strict`，必须通过
@@ -70,8 +71,14 @@ openspec validate add-kubedeck-mvp --strict
 ## 测试
 
 ```bash
-# 单元测试（后续代码就位后）
-go test ./...
+# 后端单元测试
+make test
+
+# 数据层集成测试（连接 .testenv/db.env 中的 PostgreSQL，见 docs/local-environment.md §7.3）
+make test-db
+
+# 提交前统一检查：后端 lint/测试 + 前端 lint/typecheck
+make check
 
 # 三项基础能力验证（完整命令见 docs/local-environment.md §7）
 wsl.exe -d Ubuntu -u root -- bash -lc "cd /root/kubedeck-verify && ./verify -mode=list -kubeconfig /etc/rancher/k3s/k3s.yaml -ns kube-system"

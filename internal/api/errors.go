@@ -3,7 +3,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -48,8 +47,8 @@ func (c ErrorCode) HTTPStatus() int {
 	case CodeClusterUnreachable:
 		return http.StatusServiceUnavailable
 	case CodeClusterDegraded:
-		// 降级结果仍是成功响应，仅标记数据被裁剪。
-		return http.StatusOK
+		// 集群降级时无法完成本次读取，按依赖不可用处理。
+		return http.StatusServiceUnavailable
 	case CodeUpstreamTimeout:
 		return http.StatusGatewayTimeout
 	case CodeRateLimited:
@@ -176,8 +175,5 @@ func WriteError(ctx context.Context, w http.ResponseWriter, e *Error) {
 	if e.RequestID == "" {
 		e.RequestID = RequestIDFrom(ctx)
 	}
-	status := e.Code.HTTPStatus()
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(e)
+	writeJSON(w, e.Code.HTTPStatus(), e)
 }

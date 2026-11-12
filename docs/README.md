@@ -4,11 +4,23 @@
 
 | 文档 | 内容 | 什么时候看 |
 |---|---|---|
-| [local-environment.md](local-environment.md) | WSL + k3s 环境搭建、镜像加速、常见问题、环境差异 | 第一次搭环境、环境坏了、换机器 |
+| [local-environment.md](local-environment.md) | WSL + k3s 环境搭建、数据库、镜像加速、常见问题、多版本矩阵 | 第一次搭环境、环境坏了、换机器 |
 | [../k8s-console-design.md](../k8s-console-design.md) | 产品设计总纲：架构、模块、API、安全、路线图、附录 | 想了解整体设计、评审方案 |
 | [../verify/README.md](../verify/README.md) | 三项技术验证的结果、命令与判读标准 | 确认能力可行、复现验证 |
 | [../AGENTS.md](../AGENTS.md) | 给 AI 助手的项目约定与禁止事项 | 新开窗口、换助手 |
-| [../README.md](../README.md) | 项目定位、名字由来、文档索引 | 第一次接触项目 |
+| [../README.md](../README.md) | 项目定位、当前状态、快速开始、工程命令 | 第一次接触项目 |
+
+## 工程命令
+
+| 命令 | 作用 |
+|---|---|
+| `make build` | 前端 + 后端单二进制构建 |
+| `make server` | 只构建后端（依赖 `internal/webui/dist` 占位） |
+| `make check` | 提交前入口：后端 lint/测试 + 前端 lint/typecheck |
+| `make test-db` | 数据层集成测试（真实 PostgreSQL） |
+| `make db` | 初始化本地数据库角色与库 |
+
+更完整的说明见根 [README.md](../README.md) 与 [local-environment.md](local-environment.md)。
 
 ## 阅读顺序建议
 
@@ -17,7 +29,8 @@
 3. `openspec/changes/add-kubedeck-mvp/proposal.md` — 本次变更的范围
 4. `openspec/changes/add-kubedeck-mvp/design.md` — 技术决策与权衡
 5. `openspec/changes/add-kubedeck-mvp/specs/` — 验收标准
-6. `docs/local-environment.md` — 动手前
+6. `openspec/changes/refactor-engineering-baseline/` — 工程基线的提案、设计与任务
+7. `docs/local-environment.md` — 动手前
 
 ## 文档维护约定
 

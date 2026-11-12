@@ -7,7 +7,7 @@
 bin
 node_modules
 web/node_modules
-web/dist
+internal/webui/dist
 openspec
 docs
 verify

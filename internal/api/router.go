@@ -2,33 +2,52 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/kubedeck/kubedeck/internal/config"
 	"github.com/kubedeck/kubedeck/internal/kube"
-	"github.com/kubedeck/kubedeck/web"
+	"github.com/kubedeck/kubedeck/internal/webui"
 )
 
+// ClusterRegistry 是 handler 对集群注册表的最小依赖。
+type ClusterRegistry interface {
+	Get(name string) (kube.Transport, bool)
+	All() []kube.Transport
+}
+
+// Pinger 是就绪探测对平台依赖的最小依赖。
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
+// Options 是路由装配参数。零值表示无集群、无数据库。
+type Options struct {
+	AllowedOrigins []string
+	Registry       ClusterRegistry
+	Pinger         Pinger
+}
+
+type handlers struct {
+	registry ClusterRegistry
+	pinger   Pinger
+}
+
 // NewRouter 构建 HTTP 路由。
-func NewRouter(cfg config.Config, registry *kube.Registry) http.Handler {
+func NewRouter(opts Options) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(RequestID)
 	r.Use(SecurityHeaders)
 	r.Use(Recoverer)
 	r.Use(Timeout(DefaultRequestTimeout))
-	r.Use(CORS(cfg.AllowedOrigins))
+	r.Use(CORS(opts.AllowedOrigins))
 
-	h := &handlers{registry: registry}
+	h := &handlers{registry: opts.Registry, pinger: opts.Pinger}
 
-	// 进程健康检查；/readyz（依赖 PG 与集群）在数据层就位后加入。
-	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
+	r.Get("/healthz", h.healthz)
+	r.Get("/readyz", h.readyz)
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Get("/clusters", h.listClusters)
@@ -40,7 +59,7 @@ func NewRouter(cfg config.Config, registry *kube.Registry) http.Handler {
 	})
 
 	// 前端静态资源（SPA），未匹配的 API 路径返回统一 404。
-	r.Handle("/*", SPAHandler(web.Dist()))
+	r.Handle("/*", SPAHandler(webui.Dist()))
 
 	return r
 }

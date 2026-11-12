@@ -14,7 +14,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-COPY --from=web /src/web/dist ./web/dist
+COPY --from=web /src/internal/webui/dist ./internal/webui/dist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kubedeck ./cmd/server
 
 # 3) 运行时：无发行版镜像，非 root

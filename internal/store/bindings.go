@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -98,9 +97,34 @@ func (s *Store) DeleteRoleBinding(ctx context.Context, id int64) error {
 	return nil
 }
 
+// RoleBindingInput 描述一条待写入的绑定；Namespace 为空表示全部命名空间。
+type RoleBindingInput struct {
+	Namespace string
+	RoleCode  string
+}
+
 // SetClusterAccess 用给定集合整体覆盖某用户在某个集群上的绑定：
-// 先删除 user×cluster 的旧绑定，再写入新绑定，保证一次事务内生效（60 秒内对外可见）。
+// 先删除 user×cluster 的旧绑定，再写入新绑定，保证一次事务内生效。
+// 输入中的重复四元组会被去重，避免触发唯一约束导致整笔回滚。
 func (s *Store) SetClusterAccess(ctx context.Context, userID, clusterID int64, bindings []RoleBindingInput, grantedBy *int64) error {
+	normalized := make([]RoleBindingInput, 0, len(bindings))
+	seen := make(map[RoleBindingInput]struct{}, len(bindings))
+	for _, b := range bindings {
+		if b.RoleCode == "" {
+			return errors.New("store: role code must not be empty")
+		}
+		ns := b.Namespace
+		if ns == "" {
+			ns = "*"
+		}
+		item := RoleBindingInput{Namespace: ns, RoleCode: b.RoleCode}
+		if _, dup := seen[item]; dup {
+			continue
+		}
+		seen[item] = struct{}{}
+		normalized = append(normalized, item)
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("store: begin set cluster access: %w", err)
@@ -111,15 +135,11 @@ func (s *Store) SetClusterAccess(ctx context.Context, userID, clusterID int64, b
 		`DELETE FROM role_bindings WHERE user_id = $1 AND cluster_id = $2`, userID, clusterID); err != nil {
 		return mapError(err)
 	}
-	for _, b := range bindings {
-		ns := b.Namespace
-		if ns == "" {
-			ns = "*"
-		}
+	for _, b := range normalized {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO role_bindings (user_id, cluster_id, namespace, role_id, granted_by)
 			SELECT $1, $2, $3, r.id, $5 FROM roles r WHERE r.code = $4`,
-			userID, clusterID, ns, b.RoleCode, grantedBy)
+			userID, clusterID, b.Namespace, b.RoleCode, grantedBy)
 		if err != nil {
 			return mapError(err)
 		}
@@ -131,63 +151,4 @@ func (s *Store) SetClusterAccess(ctx context.Context, userID, clusterID int64, b
 		return fmt.Errorf("store: commit set cluster access: %w", err)
 	}
 	return nil
-}
-
-// RoleBindingInput 描述一条待写入的绑定；Namespace 为空表示全部命名空间。
-type RoleBindingInput struct {
-	Namespace string
-	RoleCode  string
-}
-
-// Roles 返回平台预置角色。
-func (s *Store) Roles(ctx context.Context) ([]domain.Role, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, code, name, description, permissions, is_system, created_at
-		FROM roles ORDER BY id`)
-	if err != nil {
-		return nil, fmt.Errorf("store: list roles: %w", err)
-	}
-	defer rows.Close()
-
-	roles := make([]domain.Role, 0)
-	for rows.Next() {
-		var (
-			r    domain.Role
-			perm []byte
-		)
-		if err := rows.Scan(&r.ID, &r.Code, &r.Name, &r.Description, &perm, &r.IsSystem, &r.CreatedAt); err != nil {
-			return nil, fmt.Errorf("store: scan role: %w", err)
-		}
-		if len(perm) > 0 {
-			if err := json.Unmarshal(perm, &r.Permissions); err != nil {
-				return nil, fmt.Errorf("store: decode role permissions: %w", err)
-			}
-		}
-		roles = append(roles, r)
-	}
-	return roles, mapError(rows.Err())
-}
-
-// RoleByCode 按角色代码查询。
-func (s *Store) RoleByCode(ctx context.Context, code string) (domain.Role, error) {
-	var (
-		r    domain.Role
-		perm []byte
-	)
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, code, name, description, permissions, is_system, created_at
-		FROM roles WHERE code = $1`, code,
-	).Scan(&r.ID, &r.Code, &r.Name, &r.Description, &perm, &r.IsSystem, &r.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.Role{}, domain.ErrNotFound
-	}
-	if err != nil {
-		return domain.Role{}, fmt.Errorf("store: scan role: %w", err)
-	}
-	if len(perm) > 0 {
-		if err := json.Unmarshal(perm, &r.Permissions); err != nil {
-			return domain.Role{}, fmt.Errorf("store: decode role permissions: %w", err)
-		}
-	}
-	return r, nil
 }

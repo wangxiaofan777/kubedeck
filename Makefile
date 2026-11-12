@@ -1,35 +1,75 @@
-GO ?= go
+SHELL := /bin/bash
+
+# WSL 下 go 可能不在 PATH；找不到时回退到标准安装位置。
+GO ?= $(shell command -v go 2>/dev/null || echo /usr/local/go/bin/go)
+GO_DIR := $(dir $(GO))
+export PATH := $(GO_DIR):$(PATH)
 NPM ?= npm
 BIN := bin/kubedeck
 WEB := web
+DIST := internal/webui/dist
+KEEP := $(DIST)/.gitkeep
+STATICCHECK ?= staticcheck
+# 显式包范围：避免扫描 web/node_modules（npm 依赖里可能带 Go 文件）。
+PKGS := ./cmd/... ./internal/...
 
-.PHONY: build web server dev test test-db db lint clean
+.PHONY: all build web server dev fmt lint test test-db db web-check check web-dev clean
+
+# 本地默认：先检查再构建。CI 使用各自独立的目标。
+all: check build
 
 build: web server
 
-# 本地开发库：创建角色与 kubedeck/kubedeck_test 库，连接串写入 .testenv/db.env
+# 前端构建。构建后补回占位文件，保证 go:embed 始终有匹配。
+web:
+	cd $(WEB) && $(NPM) ci --no-audit --no-fund
+	cd $(WEB) && $(NPM) run build
+	@mkdir -p $(DIST) && touch $(KEEP)
+
+# 前端产物占位：允许在未构建前端时编译后端（go:embed all:dist 需要目录非空）。
+$(KEEP):
+	@mkdir -p $(DIST) && touch $(KEEP)
+
+server: $(KEEP)
+	@mkdir -p bin
+	$(GO) build -trimpath -ldflags="-s -w" -o $(BIN) ./cmd/server
+
+# 只启动后端；需要前端最新产物时先执行 make web。
+dev: $(KEEP)
+	$(GO) run ./cmd/server
+
+web-dev: $(KEEP)
+	cd $(WEB) && $(NPM) run dev
+
+fmt:
+	$(GO) fmt $(PKGS)
+	cd $(WEB) && $(NPM) run format
+
+# 后端静态检查：格式、vet、staticcheck。任一项失败即非零退出。
+lint: $(KEEP)
+	@files="$$(gofmt -l cmd internal)"; \
+	if [ -n "$$files" ]; then echo "gofmt required for:"; echo "$$files"; exit 1; fi
+	$(GO) vet $(PKGS)
+	@command -v $(STATICCHECK) >/dev/null 2>&1 || { \
+		echo "staticcheck not found. Install: go install honnef.co/go/tools/cmd/staticcheck@2026.2.2"; exit 1; }
+	$(STATICCHECK) $(PKGS)
+
+test: $(KEEP)
+	$(GO) test $(PKGS)
+
+test-db: $(KEEP)
+	set -a; . ./.testenv/db.env; set +a; $(GO) test ./internal/store/ -v
+
 db:
 	bash scripts/dev-db.sh
 
-# 前端构建产物供 go:embed 使用，必须先于 server 执行。
-web:
-	cd $(WEB) && $(NPM) ci --no-audit --no-fund && $(NPM) run build
+web-check:
+	cd $(WEB) && $(NPM) run lint && $(NPM) run typecheck
 
-server:
-	$(GO) build -trimpath -ldflags="-s -w" -o $(BIN) ./cmd/server
-
-dev:
-	$(GO) run ./cmd/server
-
-test:
-	$(GO) test ./...
-
-# 数据层集成测试：连真实 PostgreSQL，每个用例重置 public schema
-test-db:
-	set -a; . ./.testenv/db.env; set +a; $(GO) test ./internal/store/ -v
-
-lint:
-	$(GO) vet ./...
+# 提交前统一入口：后端 + 前端检查与测试。
+check: lint test web-check
 
 clean:
-	rm -rf $(BIN) $(WEB)/dist/assets $(WEB)/dist/index.html $(WEB)/dist/vite.svg
+	rm -rf $(BIN) $(DIST)/assets
+	rm -f $(DIST)/index.html
+	@mkdir -p $(DIST) && touch $(KEEP)

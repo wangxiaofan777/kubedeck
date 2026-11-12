@@ -96,6 +96,15 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if len(roles) != 4 {
 		t.Fatalf("seeded roles = %d, want 4", len(roles))
 	}
+
+	var withChecksum int
+	if err := st.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM schema_migrations WHERE checksum <> ''`).Scan(&withChecksum); err != nil {
+		t.Fatalf("count checksums: %v", err)
+	}
+	if withChecksum != len(want) {
+		t.Fatalf("migrations with checksum = %d, want %d", withChecksum, len(want))
+	}
 }
 
 func TestUserUpsertAndListing(t *testing.T) {
@@ -364,6 +373,21 @@ func TestSetClusterAccessReplacesBindings(t *testing.T) {
 	if len(bindings) != 2 {
 		t.Fatalf("failed transaction must roll back, got %d bindings", len(bindings))
 	}
+
+	// 重复输入必须去重，而不是触发唯一约束回滚。
+	err = st.SetClusterAccess(ctx, alice.ID, prod.ID, []RoleBindingInput{
+		{Namespace: "default", RoleCode: "developer"},
+		{Namespace: "default", RoleCode: "developer"},
+		{Namespace: "", RoleCode: "viewer"},
+		{Namespace: "*", RoleCode: "viewer"},
+	}, &admin.ID)
+	if err != nil {
+		t.Fatalf("SetClusterAccess with duplicates: %v", err)
+	}
+	bindings, _ = st.BindingsForUser(ctx, alice.ID)
+	if len(bindings) != 2 {
+		t.Fatalf("duplicates should collapse to 2 bindings, got %d", len(bindings))
+	}
 }
 
 func TestAuditChain(t *testing.T) {
@@ -544,6 +568,24 @@ func TestSettings(t *testing.T) {
 	}
 	if _, err := st.GetSetting(ctx, "no.such.key"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("missing setting error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRetentionDaysFailsClosed(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+
+	// 未配置时回退默认值。
+	if days, err := st.RetentionDays(ctx); err != nil || days != 180 {
+		t.Fatalf("default retention = %d, %v; want 180", days, err)
+	}
+
+	// 已配置但值非法时必须报错，调用方据此跳过清理，而不是回退 180。
+	if err := st.SetSetting(ctx, domain.SettingAuditRetentionDays, "not-a-number"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	if _, err := st.RetentionDays(ctx); err == nil {
+		t.Fatal("invalid retention value must return an error")
 	}
 }
 

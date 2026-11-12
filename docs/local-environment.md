@@ -210,16 +210,21 @@ wsl.exe -d Ubuntu -u root -- bash -lc 'rm -rf /var/lib/rancher/k3s-v134'
 开发模式用本地 kubeconfig 直接接入集群，跳过 OIDC 与数据库（生产路径在后续任务实现）。本机 k3s 在 WSL 内，Windows 侧直连 `127.0.0.1:6443` 不可达，因此**后端必须在 WSL 内运行**，并监听 `0.0.0.0` 供 Windows 浏览器访问：
 
 ```bash
-# WSL 内构建并启动
+# 1) 首次构建前端（Windows 侧；WSL 内没有原生 npm）
+cd /d/AI_Coding/kubedeck/web && npm ci --no-audit --no-fund && npm run build
+
+# 2) WSL 内构建并启动后端
 wsl.exe -d Ubuntu -u root -- bash -lc '
   cd /mnt/d/AI_Coding/kubedeck &&
-  GOPROXY=https://goproxy.cn,direct /usr/local/go/bin/go build -o bin/kubedeck ./cmd/server &&
+  make server &&
   KUBEDECK_ADDR=0.0.0.0:8080 \
   KUBEDECK_DEV_KUBECONFIG=/mnt/d/AI_Coding/kubedeck/.testenv/k3s.yaml \
   KUBEDECK_DEV_CLUSTER_NAME=local \
   ./bin/kubedeck
 '
 ```
+
+`make server` 只依赖 `internal/webui/dist` 中的占位文件，因此前端未构建时后端也能编译；界面要看到资源列表则需要先执行第 1 步的 `npm run build`。若 WSL 内已安装 Node，可直接用 `make build` 一条命令完成前后端构建。之后只改后端时重复 `make server` 即可。
 
 Windows 浏览器打开 <http://localhost:8080>。前端联调时改用 Vite dev server（`/api` 与 WS 已代理到 8080）：
 

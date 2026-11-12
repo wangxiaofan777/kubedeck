@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,6 +38,31 @@ func TestRequestID_ReusesClientID(t *testing.T) {
 
 	if got := rec.Header().Get("X-Request-Id"); got != "from-gateway-1" {
 		t.Fatalf("X-Request-Id = %q, want from-gateway-1", got)
+	}
+}
+
+func TestRequestID_RejectsInvalidClientID(t *testing.T) {
+	h := RequestID(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for _, bad := range []string{
+		"has space",
+		"value\r\nX-Injected: 1",
+		strings.Repeat("a", 65),
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("X-Request-Id", bad)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		got := rec.Header().Get("X-Request-Id")
+		if got == bad {
+			t.Fatalf("invalid request id %q was trusted", bad)
+		}
+		if len(got) != 36 {
+			t.Fatalf("generated id %q should be a UUID", got)
+		}
 	}
 }
 

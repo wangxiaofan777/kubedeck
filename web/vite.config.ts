@@ -18,7 +18,8 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
+    // 产物直接写入 Go 的 embed 目录，避免 node_modules 被 Go 工具链扫描。
+    outDir: '../internal/webui/dist',
     emptyOutDir: true,
   },
 })

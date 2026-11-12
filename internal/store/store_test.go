@@ -619,3 +619,34 @@ func mustPartitions(t *testing.T, st *Store) []string {
 func auditPartitionName(ts time.Time) string {
 	return "audit_logs_" + ts.UTC().Format("200601")
 }
+
+func TestCreateClusterWithCredentialAtomic(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+
+	cred := domain.Credential{
+		Ciphertext: []byte("cipher"), Nonce: []byte("nonce"),
+		KeyVersion: 1, AuthType: "token", Fingerprint: "fp",
+	}
+	c, err := st.CreateClusterWithCredential(ctx, domain.Cluster{
+		Name: "atomic", Server: "https://atomic.example.com:6443",
+		ServerVersion: "v1.37.2", Status: domain.ClusterHealthy,
+	}, cred)
+	if err != nil {
+		t.Fatalf("CreateClusterWithCredential: %v", err)
+	}
+	got, err := st.CredentialByClusterID(ctx, c.ID)
+	if err != nil || got.Fingerprint != "fp" || string(got.Ciphertext) != "cipher" {
+		t.Fatalf("credential = %+v err=%v", got, err)
+	}
+	if _, err := st.CreateClusterWithCredential(ctx, domain.Cluster{Name: "atomic", Server: "https://x"}, cred); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("duplicate err = %v, want conflict", err)
+	}
+	if err := st.UpdateClusterConnection(ctx, c.ID, "https://new.example.com:6443", "v1.38.0", "healthy", ""); err != nil {
+		t.Fatalf("UpdateClusterConnection: %v", err)
+	}
+	updated, err := st.ClusterByID(ctx, c.ID)
+	if err != nil || updated.Server != "https://new.example.com:6443" || updated.ServerVersion != "v1.38.0" {
+		t.Fatalf("updated = %+v err=%v", updated, err)
+	}
+}

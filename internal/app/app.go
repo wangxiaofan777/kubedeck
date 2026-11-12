@@ -11,7 +11,9 @@ import (
 
 	"github.com/kubedeck/kubedeck/internal/api"
 	"github.com/kubedeck/kubedeck/internal/auth"
+	"github.com/kubedeck/kubedeck/internal/cluster"
 	"github.com/kubedeck/kubedeck/internal/config"
+	"github.com/kubedeck/kubedeck/internal/crypto"
 	"github.com/kubedeck/kubedeck/internal/domain"
 	"github.com/kubedeck/kubedeck/internal/kube"
 	"github.com/kubedeck/kubedeck/internal/store"
@@ -22,6 +24,7 @@ const (
 	bootstrapTimeout  = 60 * time.Second
 	auditCheckPeriod  = 24 * time.Hour
 	sessionCheckTick  = 60 * time.Second
+	healthCheckPeriod = 60 * time.Second
 	auditMonthsAhead  = 3
 	defaultRetention  = 180
 	readHeaderTimeout = 5 * time.Second
@@ -55,6 +58,17 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	ring, err := buildKeyRing(cfg)
+	if err != nil {
+		return err
+	}
+	clusterMgr := cluster.NewManager(registry, st, ring, logger)
+	if cfg.DevKubeconfig == "" {
+		if err := clusterMgr.Load(ctx); err != nil {
+			logger.Warn("load registered clusters", "err", err)
+		}
+	}
+
 	var pinger api.Pinger
 	if st != nil {
 		pinger = st
@@ -65,6 +79,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		Registry:       registry,
 		Pinger:         pinger,
 		Auth:           authSvc,
+		ClusterAdmin:   clusterMgr,
 		BootstrapToken: cfg.BootstrapToken,
 		CookieSecure:   !cfg.CookieInsecure,
 	}
@@ -93,6 +108,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	workers = append(workers, startWorker(runCtx, func(ctx context.Context) {
 		sessionMaintenance(ctx, sessions, authSvc, logger)
+	}))
+	workers = append(workers, startWorker(runCtx, func(ctx context.Context) {
+		clusterHealth(ctx, clusterMgr, logger)
 	}))
 
 	errCh := make(chan error, 1)
@@ -295,6 +313,45 @@ func sessionMaintenance(ctx context.Context, sessions *auth.MemorySessions, svc 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+	}
+}
+
+// buildKeyRing 从配置构建凭据加密密钥环；未配置主密钥时返回 nil（仅开发模式可用）。
+func buildKeyRing(cfg config.Config) (*crypto.Ring, error) {
+	if cfg.MasterKey == "" {
+		return nil, nil
+	}
+	key, err := crypto.ParseKey(cfg.MasterKey)
+	if err != nil {
+		return nil, fmt.Errorf("parse master key: %w", err)
+	}
+	keys := map[int][]byte{cfg.MasterKeyVersion: key}
+	if cfg.PreviousMasterKey != "" {
+		prev, err := crypto.ParseKey(cfg.PreviousMasterKey)
+		if err != nil {
+			return nil, fmt.Errorf("parse previous master key: %w", err)
+		}
+		keys[cfg.PreviousMasterKeyVersion] = prev
+	}
+	ring, err := crypto.NewRing(cfg.MasterKeyVersion, keys)
+	if err != nil {
+		return nil, err
+	}
+	return ring, nil
+}
+
+// clusterHealth 周期探测全部集群，更新三态与版本；启动后立即执行一次。
+func clusterHealth(ctx context.Context, mgr *cluster.Manager, logger *slog.Logger) {
+	mgr.ProbeAll(ctx)
+	ticker := time.NewTicker(healthCheckPeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			mgr.ProbeAll(ctx)
 		}
 	}
 }

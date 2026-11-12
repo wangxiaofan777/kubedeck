@@ -36,6 +36,7 @@ func TestValidateRequiresAuthOrDevMode(t *testing.T) {
 	cfg.OIDCIssuer = "https://idp.example.com"
 	cfg.OIDCClientID = "kubedeck"
 	cfg.OIDCRedirectURL = "https://kubedeck.example.com/auth/callback"
+	cfg.MasterKey = validKey(1)
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("oidc config should be valid: %v", err)
 	}

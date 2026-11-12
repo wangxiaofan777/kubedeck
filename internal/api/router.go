@@ -30,6 +30,7 @@ type Options struct {
 	Auth           AuthService
 	AuthStore      AuthStore
 	AdminStore     AdminStore
+	ClusterAdmin   ClusterAdmin
 	BootstrapToken string
 	CookieSecure   bool
 }
@@ -40,6 +41,7 @@ type handlers struct {
 	authSvc        AuthService
 	authStore      AuthStore
 	adminStore     AdminStore
+	clusterAdmin   ClusterAdmin
 	bootstrapToken string
 	cookieSecure   bool
 	accessCache    *accessCache
@@ -62,6 +64,7 @@ func NewRouter(opts Options) http.Handler {
 		authSvc:        opts.Auth,
 		authStore:      opts.AuthStore,
 		adminStore:     opts.AdminStore,
+		clusterAdmin:   opts.ClusterAdmin,
 		bootstrapToken: opts.BootstrapToken,
 		cookieSecure:   opts.CookieSecure,
 		accessCache:    newAccessCache(),
@@ -84,10 +87,17 @@ func NewRouter(opts Options) http.Handler {
 		api.Post("/auth/logout", h.logout)
 
 		api.Get("/clusters", h.listClusters)
+		api.With(h.requireAdmin).Post("/clusters", h.createCluster)
 		api.Route("/clusters/{cluster}", func(c chi.Router) {
+			c.Get("/", h.getCluster)
+			c.Get("/health", h.getClusterHealth)
 			c.Get("/namespaces", h.listNamespaces)
 			c.Get("/resources/{group}/{version}/{resource}", h.listResources)
 			c.Get("/resources/{group}/{version}/{resource}/{name}", h.getResource)
+			c.With(h.requireAdmin).Patch("/", h.patchCluster)
+			c.With(h.requireAdmin).Delete("/", h.deleteCluster)
+			c.With(h.requireAdmin).Get("/credential", h.getCredential)
+			c.With(h.requireAdmin).Put("/credential", h.rotateCredential)
 		})
 
 		api.Route("/admin", func(a chi.Router) {

@@ -34,6 +34,10 @@ func (h *handlers) transport(w http.ResponseWriter, r *http.Request) (kube.Trans
 		WriteError(r.Context(), w, NewError(CodeNotFound, "集群不存在"))
 		return nil, nil, false
 	}
+	if info := cluster.Info(r.Context()); info.Status == kube.StatusUnreachable {
+		WriteError(r.Context(), w, NewError(CodeClusterUnreachable, "目标集群不可达，请稍后重试"))
+		return nil, nil, false
+	}
 	t, err := cluster.TransportFor(id.UserRef())
 	if err != nil {
 		WriteError(r.Context(), w, NewError(CodeInternal, "无法建立集群连接"))

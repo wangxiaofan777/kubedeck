@@ -225,6 +225,9 @@ func (c Config) Validate() error {
 	if c.MasterKeyVersion < 1 {
 		return errors.New("master_key_version: must be >= 1")
 	}
+	if c.DevKubeconfig == "" && c.MasterKey == "" {
+		return errors.New("master_key: required unless dev_kubeconfig is set")
+	}
 	if c.MasterKey == "" && c.MasterKeyVersion != 1 {
 		return errors.New("master_key_version: set without master_key")
 	}

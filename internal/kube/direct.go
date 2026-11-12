@@ -2,12 +2,16 @@ package kube
 
 import (
 	"context"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -21,6 +25,8 @@ import (
 const (
 	// requestTimeout 限制单次 apiserver 请求，避免慢集群拖住整个 handler。
 	requestTimeout = 10 * time.Second
+	// probeTimeout 限制一次健康探测，接入探测要求 5 秒内完成。
+	probeTimeout = 5 * time.Second
 	// namespacePageSize 是命名空间分页大小；listAllNamespaces 会跟随 continue 直到取完。
 	namespacePageSize = 500
 	// maxNamespacePages 是防御性上限，避免异常服务端返回重复游标造成死循环。
@@ -35,6 +41,13 @@ type DirectCluster struct {
 	name   string
 	server string
 	base   *rest.Config
+	disc   discovery.DiscoveryInterface
+	rest   rest.Interface
+
+	healthMu  sync.Mutex
+	info      ClusterInfo
+	failures  int
+	successes int
 
 	mu         sync.Mutex
 	transports map[string]*DirectTransport
@@ -63,14 +76,18 @@ func NewDirectCluster(name string, cfg *rest.Config) (*DirectCluster, error) {
 	base.Burst = 100
 	base.Timeout = requestTimeout
 
-	// 健康探测使用平台身份；若 base 自带 Impersonation 则原样保留。
-	if _, err := discovery.NewDiscoveryClientForConfig(base); err != nil {
+	disc, err := discovery.NewDiscoveryClientForConfig(base)
+	if err != nil {
 		return nil, fmt.Errorf("build discovery client: %w", err)
 	}
+	restClient := disc.RESTClient()
 	return &DirectCluster{
 		name:       name,
 		server:     base.Host,
 		base:       base,
+		disc:       disc,
+		rest:       restClient,
+		info:       ClusterInfo{Name: name, Server: base.Host, Status: StatusUnknown},
 		transports: make(map[string]*DirectTransport),
 	}, nil
 }
@@ -81,29 +98,92 @@ func (c *DirectCluster) Name() string { return c.name }
 // Server 返回 apiserver 地址。
 func (c *DirectCluster) Server() string { return c.server }
 
-// Info 返回集群版本与可达性。底层请求受 rest.Config.Timeout 限制。
-func (c *DirectCluster) Info(ctx context.Context) ClusterInfo {
-	info := ClusterInfo{Name: c.name, Server: c.server}
-	if err := ctx.Err(); err != nil {
-		info.Status = StatusUnreachable
-		info.Message = err.Error()
-		return info
+// Seed 用数据库中的状态初始化展示，避免启动后立刻显示 unknown。
+func (c *DirectCluster) Seed(status, version, message string) {
+	c.healthMu.Lock()
+	defer c.healthMu.Unlock()
+	if status == "" {
+		status = StatusUnknown
 	}
-	disc, err := discovery.NewDiscoveryClientForConfig(c.base)
-	if err != nil {
-		info.Status = StatusUnreachable
-		info.Message = err.Error()
-		return info
-	}
-	v, err := disc.ServerVersion()
-	if err != nil {
-		info.Status = StatusUnreachable
-		info.Message = err.Error()
-		return info
-	}
-	info.Version = v.GitVersion
-	info.Status = StatusHealthy
+	c.info.Status = status
+	c.info.Version = version
+	c.info.Message = message
+}
+
+// Info 返回最近一次探测结果，不发起网络请求。
+func (c *DirectCluster) Info(context.Context) ClusterInfo {
+	c.healthMu.Lock()
+	defer c.healthMu.Unlock()
+	info := c.info
+	info.Name = c.name
+	info.Server = c.server
 	return info
+}
+
+// Probe 执行一次健康探测：/readyz + 版本读取，并推进三态状态机。
+func (c *DirectCluster) Probe(ctx context.Context) ClusterInfo {
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
+	v, err := c.disc.ServerVersion()
+	if err == nil {
+		if _, err = c.rest.Get().AbsPath("/readyz").DoRaw(probeCtx); err == nil {
+			c.recordProbe(v.GitVersion, "", true)
+			return c.Info(ctx)
+		}
+	}
+	status, message := classifyProbeError(err)
+	c.recordProbe("", message, false)
+	c.healthMu.Lock()
+	c.info.Status = status
+	if status == StatusDegraded {
+		c.failures = 0 // 凭据问题不累计为网络不可达
+	}
+	c.healthMu.Unlock()
+	return c.Info(ctx)
+}
+
+func (c *DirectCluster) recordProbe(version, message string, ok bool) {
+	c.healthMu.Lock()
+	defer c.healthMu.Unlock()
+	if ok {
+		c.failures = 0
+		c.successes++
+		if version != "" {
+			c.info.Version = version
+		}
+		c.info.Status = StatusHealthy
+		c.info.Message = ""
+		return
+	}
+	c.successes = 0
+	c.failures++
+	if c.failures >= 3 {
+		c.info.Status = StatusUnreachable
+	} else if c.info.Status != StatusUnreachable {
+		c.info.Status = StatusDegraded
+	}
+	c.info.Message = message
+}
+
+func classifyProbeError(err error) (string, string) {
+	if err == nil {
+		return StatusUnreachable, "集群未返回可用响应"
+	}
+	msg := err.Error()
+	if len(msg) > 300 {
+		msg = msg[:300]
+	}
+	switch {
+	case apierrors.IsUnauthorized(err), apierrors.IsForbidden(err):
+		return StatusDegraded, "凭据无效或权限不足：" + msg
+	}
+	var unknown x509.UnknownAuthorityError
+	var invalid x509.CertificateInvalidError
+	if errors.As(err, &unknown) || errors.As(err, &invalid) || strings.Contains(msg, "tls:") || strings.Contains(msg, "x509:") {
+		return StatusDegraded, "证书校验失败：" + msg
+	}
+	return StatusUnreachable, msg
 }
 
 // TransportFor 返回带用户身份的传输层；相同身份复用客户端，避免每请求重建 TLS 配置。

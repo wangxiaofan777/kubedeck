@@ -167,3 +167,69 @@ func orEmptyLabels(labels map[string]string) map[string]string {
 	}
 	return labels
 }
+
+// CreateClusterWithCredential 在同一事务内创建集群与凭据，避免出现无凭据的登记。
+// 名称唯一冲突返回 domain.ErrConflict。
+func (s *Store) CreateClusterWithCredential(ctx context.Context, c domain.Cluster, cred domain.Credential) (domain.Cluster, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.Cluster{}, fmt.Errorf("store: begin create cluster: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	labels, err := json.Marshal(orEmptyLabels(c.Labels))
+	if err != nil {
+		return domain.Cluster{}, fmt.Errorf("store: encode cluster labels: %w", err)
+	}
+	row := tx.QueryRow(ctx, `
+		INSERT INTO clusters (name, display_name, server, transport, auth_mode,
+		                      server_version, status, message, labels, created_by)
+		VALUES ($1, COALESCE(NULLIF($2, ''), $1), $3,
+		        COALESCE(NULLIF($4, ''), 'direct'),
+		        COALESCE(NULLIF($5, ''), 'impersonation'),
+		        $6, COALESCE(NULLIF($7, ''), 'unknown'), $8, $9, $10)
+		RETURNING `+clusterColumns,
+		c.Name, c.DisplayName, c.Server, c.Transport, c.AuthMode,
+		c.ServerVersion, string(c.Status), c.Message, labels, c.CreatedBy)
+	cluster, err := scanCluster(row)
+	if err != nil {
+		return domain.Cluster{}, mapError(err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO cluster_credentials
+		    (cluster_id, ciphertext, nonce, key_version, auth_type, fingerprint, rotated_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, now(), $7)`,
+		cluster.ID, cred.Ciphertext, cred.Nonce, cred.KeyVersion, cred.AuthType,
+		cred.Fingerprint, cred.ExpiresAt); err != nil {
+		return domain.Cluster{}, mapError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Cluster{}, fmt.Errorf("store: commit create cluster: %w", err)
+	}
+	return cluster, nil
+}
+
+// ClusterCredentialMeta 返回凭据元数据（含密文），仅供服务端解密与展示指纹。
+func (s *Store) ClusterCredentialMeta(ctx context.Context, clusterID int64) (domain.Credential, error) {
+	return s.CredentialByClusterID(ctx, clusterID)
+}
+
+// UpdateClusterConnection 在凭据轮换后同步 server、版本与状态。
+func (s *Store) UpdateClusterConnection(ctx context.Context, id int64, server, version, status, message string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE clusters
+		SET server = $2,
+		    server_version = COALESCE(NULLIF($3, ''), server_version),
+		    status = COALESCE(NULLIF($4, ''), status),
+		    message = $5,
+		    updated_at = now()
+		WHERE id = $1`, id, server, version, status, message)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}

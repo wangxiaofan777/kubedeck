@@ -16,9 +16,28 @@ func validKey(seed byte) string {
 	return base64.StdEncoding.EncodeToString(key)
 }
 
-func TestDefaultIsValid(t *testing.T) {
-	if err := Default().Validate(); err != nil {
-		t.Fatalf("default config should be valid: %v", err)
+func validConfig() Config {
+	cfg := Default()
+	cfg.DevKubeconfig = "/tmp/kubeconfig"
+	return cfg
+}
+
+func TestDevConfigIsValid(t *testing.T) {
+	if err := validConfig().Validate(); err != nil {
+		t.Fatalf("dev config should be valid: %v", err)
+	}
+}
+
+func TestValidateRequiresAuthOrDevMode(t *testing.T) {
+	if err := Default().Validate(); err == nil || !strings.Contains(err.Error(), "oidc_issuer") {
+		t.Fatalf("default config must require OIDC, got %v", err)
+	}
+	cfg := Default()
+	cfg.OIDCIssuer = "https://idp.example.com"
+	cfg.OIDCClientID = "kubedeck"
+	cfg.OIDCRedirectURL = "https://kubedeck.example.com/auth/callback"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("oidc config should be valid: %v", err)
 	}
 }
 
@@ -55,7 +74,7 @@ func TestValidateRejectsInvalidValues(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := Default()
+			cfg := validConfig()
 			tc.mutate(&cfg)
 			err := cfg.Validate()
 			if err == nil {
@@ -69,7 +88,7 @@ func TestValidateRejectsInvalidValues(t *testing.T) {
 }
 
 func TestValidateAcceptsKeyRing(t *testing.T) {
-	cfg := Default()
+	cfg := validConfig()
 	cfg.MasterKey = validKey(1)
 	cfg.MasterKeyVersion = 2
 	cfg.PreviousMasterKey = validKey(2)
@@ -95,6 +114,7 @@ func TestLoadRejectsUnknownYAMLKeys(t *testing.T) {
 
 func TestLoadAppliesEnvOverrides(t *testing.T) {
 	t.Setenv("KUBEDECK_CONFIG", "")
+	t.Setenv("KUBEDECK_DEV_KUBECONFIG", "/tmp/kubeconfig")
 	t.Setenv("KUBEDECK_ADDR", "127.0.0.1:9090")
 	t.Setenv("KUBEDECK_LOG_LEVEL", "DEBUG")
 

@@ -98,10 +98,7 @@ func (s *Store) DeleteRoleBinding(ctx context.Context, id int64) error {
 }
 
 // RoleBindingInput 描述一条待写入的绑定；Namespace 为空表示全部命名空间。
-type RoleBindingInput struct {
-	Namespace string
-	RoleCode  string
-}
+type RoleBindingInput = domain.RoleBindingInput
 
 // SetClusterAccess 用给定集合整体覆盖某用户在某个集群上的绑定：
 // 先删除 user×cluster 的旧绑定，再写入新绑定，保证一次事务内生效。

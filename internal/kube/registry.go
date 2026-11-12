@@ -2,28 +2,27 @@ package kube
 
 import "sync"
 
-// Registry 维护集群名到 Transport 的映射，按注册顺序返回。
-// 开发模式下只注册一个本地集群；生产模式由数据库中的集群登记驱动（后续任务）。
+// Registry 维护集群名到 ClusterAccess 的映射，按注册顺序返回。
 type Registry struct {
 	mu    sync.RWMutex
-	items map[string]Transport
+	items map[string]ClusterAccess
 	order []string
 }
 
 // NewRegistry 创建空注册表。
 func NewRegistry() *Registry {
-	return &Registry{items: make(map[string]Transport)}
+	return &Registry{items: make(map[string]ClusterAccess)}
 }
 
 // Add 注册集群；同名覆盖且保持原有顺序。不发起网络请求。
-func (r *Registry) Add(t Transport) {
+func (r *Registry) Add(c ClusterAccess) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	name := t.Name()
+	name := c.Name()
 	if _, exists := r.items[name]; !exists {
 		r.order = append(r.order, name)
 	}
-	r.items[name] = t
+	r.items[name] = c
 }
 
 // Remove 移除集群；不存在时返回 false。
@@ -44,11 +43,11 @@ func (r *Registry) Remove(name string) bool {
 }
 
 // Get 按名称查找集群。
-func (r *Registry) Get(name string) (Transport, bool) {
+func (r *Registry) Get(name string) (ClusterAccess, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	t, ok := r.items[name]
-	return t, ok
+	c, ok := r.items[name]
+	return c, ok
 }
 
 // Names 按注册顺序返回集群名。
@@ -61,13 +60,13 @@ func (r *Registry) Names() []string {
 }
 
 // All 按注册顺序返回全部集群。
-func (r *Registry) All() []Transport {
+func (r *Registry) All() []ClusterAccess {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := make([]Transport, 0, len(r.order))
+	out := make([]ClusterAccess, 0, len(r.order))
 	for _, name := range r.order {
-		if t, ok := r.items[name]; ok {
-			out = append(out, t)
+		if c, ok := r.items[name]; ok {
+			out = append(out, c)
 		}
 	}
 	return out

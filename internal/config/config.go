@@ -37,15 +37,31 @@ type Config struct {
 	// PreviousMasterKey / PreviousMasterKeyVersion 用于密钥轮换期间解密旧密文。
 	PreviousMasterKey        string `yaml:"previous_master_key"`
 	PreviousMasterKeyVersion int    `yaml:"previous_master_key_version"`
+	// OIDC 登录配置。未配置 dev_kubeconfig 时至少需要 issuer/client_id/redirect_url。
+	OIDCIssuer       string   `yaml:"oidc_issuer"`
+	OIDCClientID     string   `yaml:"oidc_client_id"`
+	OIDCClientSecret string   `yaml:"oidc_client_secret"`
+	OIDCRedirectURL  string   `yaml:"oidc_redirect_url"`
+	OIDCScopes       []string `yaml:"oidc_scopes"`
+	// BootstrapToken 用于创建首个平台管理员；创建成功后接口自动失效。
+	BootstrapToken string `yaml:"bootstrap_token"`
+	// CookieInsecure 仅供本地 HTTP 调试；生产必须为 false（Secure Cookie）。
+	CookieInsecure bool `yaml:"cookie_insecure"`
+	// SessionTTLHours 是平台会话有效期，默认 8 小时。
+	SessionTTLHours int `yaml:"session_ttl_hours"`
+	// MaxSessionsPerUser 是同一用户并发会话上限，超出时最早会话失效。
+	MaxSessionsPerUser int `yaml:"max_sessions_per_user"`
 }
 
 // Default 返回内置默认配置。
 func Default() Config {
 	return Config{
-		Addr:             ":8080",
-		LogLevel:         "info",
-		DevClusterName:   "local",
-		MasterKeyVersion: 1,
+		Addr:               ":8080",
+		LogLevel:           "info",
+		DevClusterName:     "local",
+		MasterKeyVersion:   1,
+		SessionTTLHours:    8,
+		MaxSessionsPerUser: 5,
 	}
 }
 
@@ -112,10 +128,53 @@ func Load() (Config, error) {
 		}
 		cfg.PreviousMasterKeyVersion = n
 	}
+	if v := os.Getenv("KUBEDECK_OIDC_ISSUER"); v != "" {
+		cfg.OIDCIssuer = v
+	}
+	if v := os.Getenv("KUBEDECK_OIDC_CLIENT_ID"); v != "" {
+		cfg.OIDCClientID = v
+	}
+	if v := os.Getenv("KUBEDECK_OIDC_CLIENT_SECRET"); v != "" {
+		cfg.OIDCClientSecret = v
+	}
+	if v := os.Getenv("KUBEDECK_OIDC_REDIRECT_URL"); v != "" {
+		cfg.OIDCRedirectURL = v
+	}
+	if v := os.Getenv("KUBEDECK_OIDC_SCOPES"); v != "" {
+		cfg.OIDCScopes = nil
+		for _, s := range strings.Split(v, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				cfg.OIDCScopes = append(cfg.OIDCScopes, s)
+			}
+		}
+	}
+	if v := os.Getenv("KUBEDECK_BOOTSTRAP_TOKEN"); v != "" {
+		cfg.BootstrapToken = v
+	}
+	if v := os.Getenv("KUBEDECK_COOKIE_INSECURE"); v != "" {
+		cfg.CookieInsecure, _ = strconv.ParseBool(v)
+	}
+	if v := os.Getenv("KUBEDECK_SESSION_TTL_HOURS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return cfg, fmt.Errorf("KUBEDECK_SESSION_TTL_HOURS must be a positive integer, got %q", v)
+		}
+		cfg.SessionTTLHours = n
+	}
+	if v := os.Getenv("KUBEDECK_MAX_SESSIONS_PER_USER"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return cfg, fmt.Errorf("KUBEDECK_MAX_SESSIONS_PER_USER must be a positive integer, got %q", v)
+		}
+		cfg.MaxSessionsPerUser = n
+	}
 
 	cfg.Addr = strings.TrimSpace(cfg.Addr)
 	cfg.LogLevel = strings.ToLower(strings.TrimSpace(cfg.LogLevel))
 	cfg.DevClusterName = strings.TrimSpace(cfg.DevClusterName)
+	cfg.OIDCIssuer = strings.TrimSpace(cfg.OIDCIssuer)
+	cfg.OIDCClientID = strings.TrimSpace(cfg.OIDCClientID)
+	cfg.OIDCRedirectURL = strings.TrimSpace(cfg.OIDCRedirectURL)
 
 	if err := cfg.Validate(); err != nil {
 		return cfg, err
@@ -140,6 +199,27 @@ func (c Config) Validate() error {
 	}
 	if c.DevKubeconfig != "" && c.DevClusterName == "" {
 		return errors.New("dev_cluster_name: required when dev_kubeconfig is set")
+	}
+	// 安全底线：没有显式开发模式时，必须配置 OIDC，不能以无认证状态启动。
+	if c.DevKubeconfig == "" {
+		if c.OIDCIssuer == "" {
+			return errors.New("oidc_issuer: required unless dev_kubeconfig is set")
+		}
+		if c.OIDCClientID == "" {
+			return errors.New("oidc_client_id: required when oidc_issuer is set")
+		}
+		if c.OIDCRedirectURL == "" {
+			return errors.New("oidc_redirect_url: required when oidc_issuer is set")
+		}
+	}
+	if c.BootstrapToken != "" && len(c.BootstrapToken) < 16 {
+		return errors.New("bootstrap_token: must be at least 16 characters")
+	}
+	if c.SessionTTLHours < 1 {
+		return errors.New("session_ttl_hours: must be >= 1")
+	}
+	if c.MaxSessionsPerUser < 1 {
+		return errors.New("max_sessions_per_user: must be >= 1")
 	}
 
 	if c.MasterKeyVersion < 1 {

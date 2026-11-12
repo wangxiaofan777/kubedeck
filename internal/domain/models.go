@@ -77,6 +77,12 @@ type RoleBinding struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
+// RoleBindingInput 描述一条待写入的绑定；Namespace 为空表示全部命名空间。
+type RoleBindingInput struct {
+	Namespace string `json:"namespace"`
+	RoleCode  string `json:"roleCode"`
+}
+
 // AuditEntry 是一条审计记录。写入时 ID 为空，查询时由仓储填充。
 type AuditEntry struct {
 	ID           int64

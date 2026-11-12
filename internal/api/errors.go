@@ -8,6 +8,8 @@ import (
 	"net/http"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
+	"github.com/kubedeck/kubedeck/internal/domain"
 )
 
 // ErrorCode 是稳定错误码，取值见 k8s-console-design.md 附录 E。
@@ -123,6 +125,22 @@ func FromUpstream(err error) *Error {
 		}
 	}
 	return e
+}
+
+// FromPlatformError 把平台仓储/领域的错误映射为稳定错误码。
+func FromPlatformError(err error) *Error {
+	switch {
+	case err == nil:
+		return NewError(CodeInternal, "平台内部错误")
+	case errors.Is(err, domain.ErrNotFound):
+		return NewError(CodeNotFound, "资源不存在")
+	case errors.Is(err, domain.ErrConflict):
+		return NewError(CodeConflict, "资源已存在或状态冲突")
+	case errors.Is(err, domain.ErrInvalid):
+		return NewError(CodeInvalidArgument, "请求参数不合法")
+	default:
+		return NewError(CodeInternal, "平台内部错误")
+	}
 }
 
 // userMessage 为每个错误码提供面向用户的中文提示，避免把 upstream 原文直接暴露给前端。

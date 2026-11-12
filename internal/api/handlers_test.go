@@ -11,6 +11,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"github.com/kubedeck/kubedeck/internal/auth"
+	"github.com/kubedeck/kubedeck/internal/domain"
 	"github.com/kubedeck/kubedeck/internal/kube"
 )
 
@@ -44,25 +46,73 @@ func (f *fakeTransport) Get(context.Context, schema.GroupVersionResource, string
 	}
 	return f.object, nil
 }
+func (f *fakeTransport) ReviewAccess(context.Context, kube.AccessRequest) (kube.AccessResult, error) {
+	return kube.AccessResult{Allowed: true}, nil
+}
+
+type fakeCluster struct{ t *fakeTransport }
+
+func (c *fakeCluster) Name() string { return c.t.name }
+func (c *fakeCluster) Info(context.Context) kube.ClusterInfo {
+	return kube.ClusterInfo{Name: c.t.name, Version: "v1.37.2", Status: kube.StatusHealthy}
+}
+func (c *fakeCluster) TransportFor(kube.UserRef) (kube.Transport, error) { return c.t, nil }
 
 type fakeRegistry struct {
-	items map[string]kube.Transport
+	items map[string]kube.ClusterAccess
 	order []string
 }
 
-func (f *fakeRegistry) Get(name string) (kube.Transport, bool) {
-	t, ok := f.items[name]
-	return t, ok
+func (f *fakeRegistry) Get(name string) (kube.ClusterAccess, bool) {
+	c, ok := f.items[name]
+	return c, ok
 }
 
-func (f *fakeRegistry) All() []kube.Transport {
-	out := make([]kube.Transport, 0, len(f.order))
+func (f *fakeRegistry) All() []kube.ClusterAccess {
+	out := make([]kube.ClusterAccess, 0, len(f.order))
 	for _, name := range f.order {
-		if t, ok := f.items[name]; ok {
-			out = append(out, t)
+		if c, ok := f.items[name]; ok {
+			out = append(out, c)
 		}
 	}
 	return out
+}
+
+type fakeAuth struct {
+	identity      auth.Identity
+	authenticated bool
+	dev           bool
+}
+
+func (f fakeAuth) DevMode() bool { return f.dev }
+func (f fakeAuth) DevIdentity() (auth.Identity, bool) {
+	return f.identity, f.dev
+}
+func (f fakeAuth) NewDevSession() (auth.Session, error) {
+	return auth.Session{ID: "test", Identity: f.identity, ExpiresAt: 1 << 40}, nil
+}
+func (f fakeAuth) StartLogin(string) (string, string, error) { return "/auth/mock", "state", nil }
+func (f fakeAuth) FinishLogin(context.Context, string, string, string) (auth.Session, string, error) {
+	return auth.Session{}, "/", nil
+}
+func (f fakeAuth) Session(string) (auth.Session, bool) {
+	if !f.authenticated {
+		return auth.Session{}, false
+	}
+	return auth.Session{ID: "test", Identity: f.identity}, true
+}
+func (f fakeAuth) Logout(string)    {}
+func (f fakeAuth) LogoutUser(int64) {}
+
+type fakeAuthStore struct {
+	bindings []domain.RoleBinding
+}
+
+func (f fakeAuthStore) BindingsForUser(context.Context, int64) ([]domain.RoleBinding, error) {
+	return f.bindings, nil
+}
+func (f fakeAuthStore) ClustersForUser(context.Context, int64) ([]domain.Cluster, error) {
+	return nil, nil
 }
 
 type fakePinger struct{ err error }
@@ -93,10 +143,10 @@ func testRouter(t *testing.T) http.Handler {
 		object: testDeployment(),
 	}
 	registry := &fakeRegistry{
-		items: map[string]kube.Transport{"prod": transport},
+		items: map[string]kube.ClusterAccess{"prod": &fakeCluster{t: transport}},
 		order: []string{"prod"},
 	}
-	return NewRouter(Options{Registry: registry})
+	return NewRouter(Options{Registry: registry, Auth: fakeAuth{authenticated: true, identity: auth.Identity{Subject: "tester", PlatformAdmin: true}}})
 }
 
 func doRequest(t *testing.T, h http.Handler, method, target string) *httptest.ResponseRecorder {
@@ -207,7 +257,7 @@ func TestGetResourceAsYAML(t *testing.T) {
 }
 
 func TestHealthAndReadiness(t *testing.T) {
-	healthy := NewRouter(Options{})
+	healthy := NewRouter(Options{Auth: fakeAuth{authenticated: true, identity: auth.Identity{Subject: "tester", PlatformAdmin: true}}})
 	rec := doRequest(t, healthy, http.MethodGet, "/healthz")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("healthz status = %d, want 200", rec.Code)
@@ -217,7 +267,7 @@ func TestHealthAndReadiness(t *testing.T) {
 		t.Fatalf("readyz without dependencies status = %d, want 200", rec.Code)
 	}
 
-	unready := NewRouter(Options{Pinger: fakePinger{err: context.DeadlineExceeded}})
+	unready := NewRouter(Options{Auth: fakeAuth{authenticated: true, identity: auth.Identity{Subject: "tester", PlatformAdmin: true}}, Pinger: fakePinger{err: context.DeadlineExceeded}})
 	rec = doRequest(t, unready, http.MethodGet, "/healthz")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("healthz must stay 200 when dependency fails, got %d", rec.Code)
@@ -225,5 +275,73 @@ func TestHealthAndReadiness(t *testing.T) {
 	rec = doRequest(t, unready, http.MethodGet, "/readyz")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("readyz status = %d, want 503", rec.Code)
+	}
+}
+
+func TestUnauthenticatedReturns401(t *testing.T) {
+	rec := doRequest(t, NewRouter(Options{Auth: fakeAuth{}}), http.MethodGet, "/api/v1/clusters")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	var body Error
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Code != CodeUnauthenticated {
+		t.Fatalf("code = %s, want UNAUTHENTICATED", body.Code)
+	}
+}
+
+func TestUnauthorizedClusterReturns403WithoutName(t *testing.T) {
+	transport := &fakeTransport{name: "prod", namespaces: []string{"default"}}
+	registry := &fakeRegistry{
+		items: map[string]kube.ClusterAccess{"prod": &fakeCluster{t: transport}},
+		order: []string{"prod"},
+	}
+	router := NewRouter(Options{
+		Registry:  registry,
+		Auth:      fakeAuth{authenticated: true, identity: auth.Identity{Subject: "viewer"}},
+		AuthStore: fakeAuthStore{},
+	})
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/clusters/prod/namespaces")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "prod") {
+		t.Fatalf("403 body must not leak cluster name: %s", rec.Body.String())
+	}
+}
+
+func TestCanBatchReviewWithBinding(t *testing.T) {
+	transport := &fakeTransport{name: "prod", namespaces: []string{"default"}}
+	registry := &fakeRegistry{
+		items: map[string]kube.ClusterAccess{"prod": &fakeCluster{t: transport}},
+		order: []string{"prod"},
+	}
+	store := fakeAuthStore{bindings: []domain.RoleBinding{{
+		UserID: 9, ClusterName: "prod", Namespace: "default", RoleCode: "viewer",
+	}}}
+	router := NewRouter(Options{
+		Registry:  registry,
+		Auth:      fakeAuth{authenticated: true, identity: auth.Identity{UserID: 9, Subject: "viewer"}},
+		AuthStore: store,
+	})
+	body := `{"checks":[{"cluster":"prod","namespace":"default","verb":"delete","resource":"pods"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/can", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Results []accessResult `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Results) != 1 || !resp.Results[0].Allowed {
+		t.Fatalf("results = %+v", resp.Results)
 	}
 }

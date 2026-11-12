@@ -18,7 +18,7 @@ type listResponse struct {
 
 // listResources 列出任意 GVR 的资源。
 func (h *handlers) listResources(w http.ResponseWriter, r *http.Request) {
-	t, ok := h.transport(w, r)
+	t, _, ok := h.transport(w, r)
 	if !ok {
 		return
 	}
@@ -57,7 +57,7 @@ func (h *handlers) listResources(w http.ResponseWriter, r *http.Request) {
 
 // getResource 读取单个资源；?format=yaml 返回 YAML 文本。
 func (h *handlers) getResource(w http.ResponseWriter, r *http.Request) {
-	t, ok := h.transport(w, r)
+	t, _, ok := h.transport(w, r)
 	if !ok {
 		return
 	}

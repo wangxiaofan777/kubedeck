@@ -13,6 +13,7 @@ const (
 	StatusHealthy     = "healthy"
 	StatusDegraded    = "degraded"
 	StatusUnreachable = "unreachable"
+	StatusUnknown     = "unknown"
 )
 
 // ClusterInfo 是对外暴露的集群摘要。
@@ -32,7 +33,32 @@ type ListOptions struct {
 	FieldSelector string
 }
 
-// Transport 抽象对单个集群的访问。Direct 是本期唯一实现，Agent 模式后续扩展。
+// UserRef 是发起集群请求的用户身份。所有资源请求都必须带上它，
+// 由 apiserver 通过 Impersonation 完成授权（design D2）。
+type UserRef struct {
+	Name   string
+	Groups []string
+}
+
+// AccessRequest 描述一次权限预检。
+type AccessRequest struct {
+	Verb        string
+	Group       string
+	Version     string
+	Resource    string
+	Subresource string
+	Namespace   string
+	Name        string
+}
+
+// AccessResult 是权限预检结果。
+type AccessResult struct {
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// Transport 抽象某个用户视角下的单集群访问。Direct 是本期唯一实现，Agent 模式后续扩展。
+// 实现必须把用户身份传递给 apiserver，不得退化成平台自身的高权限身份。
 type Transport interface {
 	// Name 返回注册名，不触发任何网络请求。
 	Name() string
@@ -41,4 +67,14 @@ type Transport interface {
 	Namespaces(ctx context.Context) ([]string, error)
 	List(ctx context.Context, gvr schema.GroupVersionResource, namespace string, opts ListOptions) (*unstructured.UnstructuredList, error)
 	Get(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error)
+	// ReviewAccess 以当前用户身份执行 SelfSubjectAccessReview。
+	ReviewAccess(ctx context.Context, req AccessRequest) (AccessResult, error)
+}
+
+// ClusterAccess 是注册表持有的集群入口：既能给出与用户无关的健康信息，
+// 也能按用户身份构造独立传输层。
+type ClusterAccess interface {
+	Name() string
+	Info(ctx context.Context) ClusterInfo
+	TransportFor(user UserRef) (Transport, error)
 }

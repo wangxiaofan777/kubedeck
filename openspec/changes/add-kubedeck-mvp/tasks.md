@@ -5,7 +5,7 @@
 - [x] 1.3 定义统一错误模型 `{code,message,details,requestId}` 与 apiserver `Status` 映射，验证表驱动单测覆盖 403/404/409/422/5xx
 - [x] 1.4 实现请求中间件链（requestId、recover、超时、CORS、安全响应头），验证异常请求不会导致进程退出且响应含 requestId
 - [x] 1.5 搭建 Vite + React + TypeScript 前端，配置 `go:embed` 打包，验证 `make build` 产出单二进制且访问 `/` 返回页面
-- [ ] 1.6 配置 CI（lint、单测、前端构建、镜像构建），验证流水线在 PR 上全绿
+- [x] 1.6 配置 CI（lint、单测、前端构建、镜像构建），验证流水线在 PR 上全绿
 
 ## 2. 数据层
 
@@ -17,14 +17,14 @@
 
 ## 3. 认证与授权
 
-- [ ] 3.1 实现 OIDC 授权码 + PKCE 登录与回调，验证在本地 Dex/Keycloak 上完成登录并建立会话
-- [ ] 3.2 实现会话 Cookie（HttpOnly/Secure/SameSite=Lax）与登出，验证 Set-Cookie 属性正确、登出后旧 Cookie 失效
-- [ ] 3.3 实现 IdP 撤销检测（token introspection 或短周期校验），验证禁用用户后 5 分钟内请求返回 401
-- [ ] 3.4 实现 Impersonation 客户端工厂（按用户的 `Impersonate-User`/`Impersonate-Group`），验证普通用户请求在无授权时返回 403
-- [ ] 3.5 实现 `POST /auth/can` 批量预检（SSAR），验证结果含 allowed 与 reason，且缓存不超过 60 秒
-- [ ] 3.6 实现角色绑定 CRUD 与权限缓存失效，验证授权/回收在 60 秒内生效
-- [ ] 3.7 实现首个管理员引导流程，验证创建成功后再次调用返回 409
-- [ ] 3.8 编写授权集成测试：未授权 → 绑定 → 跨命名空间拒绝 → SSAR，验证四个断言全部通过
+- [x] 3.1 实现 OIDC 授权码 + PKCE 登录与回调，验证在本地 Dex/Keycloak 上完成登录并建立会话
+- [x] 3.2 实现会话 Cookie（HttpOnly/Secure/SameSite=Lax）与登出，验证 Set-Cookie 属性正确、登出后旧 Cookie 失效
+- [x] 3.3 实现 IdP 撤销检测（token introspection 或短周期校验），验证禁用用户后 5 分钟内请求返回 401
+- [x] 3.4 实现 Impersonation 客户端工厂（按用户的 `Impersonate-User`/`Impersonate-Group`），验证普通用户请求在无授权时返回 403
+- [x] 3.5 实现 `POST /auth/can` 批量预检（SSAR），验证结果含 allowed 与 reason，且缓存不超过 60 秒
+- [x] 3.6 实现角色绑定 CRUD 与权限缓存失效，验证授权/回收在 60 秒内生效
+- [x] 3.7 实现首个管理员引导流程，验证创建成功后再次调用返回 409
+- [x] 3.8 编写授权集成测试：未授权 → 绑定 → 跨命名空间拒绝 → SSAR，验证四个断言全部通过
 
 ## 4. 集群接入
 

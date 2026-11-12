@@ -6,4 +6,5 @@ import "errors"
 var (
 	ErrNotFound = errors.New("domain: not found")
 	ErrConflict = errors.New("domain: conflict")
+	ErrInvalid  = errors.New("domain: invalid argument")
 )

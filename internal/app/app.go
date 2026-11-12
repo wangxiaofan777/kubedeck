@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kubedeck/kubedeck/internal/api"
+	"github.com/kubedeck/kubedeck/internal/auth"
 	"github.com/kubedeck/kubedeck/internal/config"
 	"github.com/kubedeck/kubedeck/internal/domain"
 	"github.com/kubedeck/kubedeck/internal/kube"
@@ -20,6 +21,7 @@ const (
 	shutdownTimeout   = 10 * time.Second
 	bootstrapTimeout  = 60 * time.Second
 	auditCheckPeriod  = 24 * time.Hour
+	sessionCheckTick  = 60 * time.Second
 	auditMonthsAhead  = 3
 	defaultRetention  = 180
 	readHeaderTimeout = 5 * time.Second
@@ -31,6 +33,10 @@ const (
 // Run 启动 HTTP 服务与后台任务，直到 ctx 结束或服务出错。
 // 退出顺序：停止接收请求 → 停止后台任务 → 释放数据库连接（由 defer 完成）。
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	if cfg.DevKubeconfig == "" && cfg.DatabaseURL == "" {
+		return errors.New("database_url is required unless dev_kubeconfig is set")
+	}
+
 	st, err := openDatabase(ctx, cfg, logger)
 	if err != nil {
 		return err
@@ -44,18 +50,32 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	authSvc, sessions, err := buildAuth(ctx, cfg, st, logger)
+	if err != nil {
+		return err
+	}
+
 	var pinger api.Pinger
 	if st != nil {
 		pinger = st
 	}
 
+	opts := api.Options{
+		AllowedOrigins: cfg.AllowedOrigins,
+		Registry:       registry,
+		Pinger:         pinger,
+		Auth:           authSvc,
+		BootstrapToken: cfg.BootstrapToken,
+		CookieSecure:   !cfg.CookieInsecure,
+	}
+	if st != nil {
+		opts.AuthStore = st
+		opts.AdminStore = st
+	}
+
 	srv := &http.Server{
-		Addr: cfg.Addr,
-		Handler: api.NewRouter(api.Options{
-			AllowedOrigins: cfg.AllowedOrigins,
-			Registry:       registry,
-			Pinger:         pinger,
-		}),
+		Addr:              cfg.Addr,
+		Handler:           api.NewRouter(opts),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
@@ -65,19 +85,19 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	workerDone := make(chan struct{})
+	var workers []chan struct{}
 	if st != nil {
-		go func() {
-			defer close(workerDone)
-			auditMaintenance(runCtx, st, logger)
-		}()
-	} else {
-		close(workerDone)
+		workers = append(workers, startWorker(runCtx, func(ctx context.Context) {
+			auditMaintenance(ctx, st, logger)
+		}))
 	}
+	workers = append(workers, startWorker(runCtx, func(ctx context.Context) {
+		sessionMaintenance(ctx, sessions, authSvc, logger)
+	}))
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("server starting", "addr", cfg.Addr)
+		logger.Info("server starting", "addr", cfg.Addr, "auth", authMode(cfg))
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -99,12 +119,30 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 
 	cancel()
-	<-workerDone
+	for _, done := range workers {
+		<-done
+	}
 	logger.Info("server stopped")
 	return runErr
 }
 
-// openDatabase 连接数据库并应用迁移；未配置连接串时返回 nil（dev 模式）。
+func startWorker(ctx context.Context, fn func(context.Context)) chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn(ctx)
+	}()
+	return done
+}
+
+func authMode(cfg config.Config) string {
+	if cfg.DevKubeconfig != "" {
+		return "dev"
+	}
+	return "oidc"
+}
+
+// openDatabase 连接数据库并应用迁移；未配置连接串时返回 nil（仅 dev 模式允许）。
 func openDatabase(ctx context.Context, cfg config.Config, logger *slog.Logger) (*store.Store, error) {
 	if cfg.DatabaseURL == "" {
 		logger.Warn("database not configured; platform metadata and audit are disabled")
@@ -136,18 +174,74 @@ func openDatabase(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 	return st, nil
 }
 
-// buildRegistry 注册集群。当前只支持 dev 模式的本地 kubeconfig；
-// 数据库驱动的集群登记在后续任务中接入。
+// buildAuth 构造认证服务。开发模式使用本地身份（显式配置才启用）；
+// 生产模式从 OIDC discovery 开始，IdP 不可达时启动失败。
+func buildAuth(ctx context.Context, cfg config.Config, st *store.Store, logger *slog.Logger) (*auth.Service, *auth.MemorySessions, error) {
+	sessions := auth.NewMemorySessions(cfg.MaxSessionsPerUser, time.Duration(cfg.SessionTTLHours)*time.Hour)
+
+	if cfg.DevKubeconfig != "" {
+		subject := cfg.DevUser
+		if subject == "" {
+			subject = "dev"
+		}
+		id := auth.Identity{
+			Subject:       subject,
+			KubeUser:      cfg.DevUser, // 为空时不 Impersonation，直接用 kubeconfig 身份
+			Email:         subject,
+			DisplayName:   "Local Developer",
+			PlatformAdmin: true,
+			Dev:           true,
+		}
+		if st != nil {
+			user, err := st.UpsertUser(ctx, domain.User{
+				Subject:     subject,
+				Email:       subject,
+				DisplayName: "Local Developer",
+				Source:      "local",
+			})
+			if err != nil {
+				return nil, nil, fmt.Errorf("upsert dev user: %w", err)
+			}
+			id.UserID = user.ID
+			id.Email = user.Email
+		}
+		logger.Warn("development auth enabled; no login or platform authorization is enforced",
+			"user", subject)
+		return auth.NewService(auth.Config{Sessions: sessions, Dev: &id, Users: st, Logger: logger}), sessions, nil
+	}
+
+	provider, err := auth.NewProvider(ctx, auth.OIDCConfig{
+		Issuer:       cfg.OIDCIssuer,
+		ClientID:     cfg.OIDCClientID,
+		ClientSecret: cfg.OIDCClientSecret,
+		RedirectURL:  cfg.OIDCRedirectURL,
+		Scopes:       cfg.OIDCScopes,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if st == nil {
+		return nil, nil, errors.New("database is required when OIDC auth is enabled")
+	}
+	return auth.NewService(auth.Config{
+		Provider: provider,
+		Users:    st,
+		Sessions: sessions,
+		Logger:   logger,
+	}), sessions, nil
+}
+
+// buildRegistry 注册开发模式集群；生产集群由数据库登记在阶段 2 接入。
 func buildRegistry(cfg config.Config, logger *slog.Logger) (*kube.Registry, error) {
 	registry := kube.NewRegistry()
 	if cfg.DevKubeconfig == "" {
 		return registry, nil
 	}
-	t, err := kube.NewDirectTransport(cfg.DevClusterName, cfg.DevKubeconfig, cfg.DevUser)
+	cluster, err := kube.NewDirectClusterFromKubeconfig(cfg.DevClusterName, cfg.DevKubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("init dev cluster: %w", err)
 	}
-	registry.Add(t)
+	registry.Add(cluster)
 	logger.Info("dev cluster registered", "name", cfg.DevClusterName, "kubeconfig", cfg.DevKubeconfig)
 	return registry, nil
 }
@@ -180,6 +274,23 @@ func auditMaintenance(ctx context.Context, st *store.Store, logger *slog.Logger)
 			}
 		}
 
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// sessionMaintenance 清理过期会话并周期性向 IdP 校验撤销状态。
+func sessionMaintenance(ctx context.Context, sessions *auth.MemorySessions, svc *auth.Service, logger *slog.Logger) {
+	ticker := time.NewTicker(sessionCheckTick)
+	defer ticker.Stop()
+	for {
+		if n := sessions.Cleanup(); n > 0 {
+			logger.Debug("expired sessions cleaned", "count", n)
+		}
+		svc.RevalidateIdP(ctx)
 		select {
 		case <-ctx.Done():
 			return

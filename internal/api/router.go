@@ -13,8 +13,8 @@ import (
 
 // ClusterRegistry 是 handler 对集群注册表的最小依赖。
 type ClusterRegistry interface {
-	Get(name string) (kube.Transport, bool)
-	All() []kube.Transport
+	Get(name string) (kube.ClusterAccess, bool)
+	All() []kube.ClusterAccess
 }
 
 // Pinger 是就绪探测对平台依赖的最小依赖。
@@ -27,11 +27,22 @@ type Options struct {
 	AllowedOrigins []string
 	Registry       ClusterRegistry
 	Pinger         Pinger
+	Auth           AuthService
+	AuthStore      AuthStore
+	AdminStore     AdminStore
+	BootstrapToken string
+	CookieSecure   bool
 }
 
 type handlers struct {
-	registry ClusterRegistry
-	pinger   Pinger
+	registry       ClusterRegistry
+	pinger         Pinger
+	authSvc        AuthService
+	authStore      AuthStore
+	adminStore     AdminStore
+	bootstrapToken string
+	cookieSecure   bool
+	accessCache    *accessCache
 }
 
 // NewRouter 构建 HTTP 路由。
@@ -43,18 +54,51 @@ func NewRouter(opts Options) http.Handler {
 	r.Use(Recoverer)
 	r.Use(Timeout(DefaultRequestTimeout))
 	r.Use(CORS(opts.AllowedOrigins))
+	r.Use(sameOrigin(opts.AllowedOrigins))
 
-	h := &handlers{registry: opts.Registry, pinger: opts.Pinger}
+	h := &handlers{
+		registry:       opts.Registry,
+		pinger:         opts.Pinger,
+		authSvc:        opts.Auth,
+		authStore:      opts.AuthStore,
+		adminStore:     opts.AdminStore,
+		bootstrapToken: opts.BootstrapToken,
+		cookieSecure:   opts.CookieSecure,
+		accessCache:    newAccessCache(),
+	}
 
 	r.Get("/healthz", h.healthz)
 	r.Get("/readyz", h.readyz)
 
+	// OIDC 跳转与回调必须位于未认证路由。
+	r.Get("/auth/login", h.login)
+	r.Get("/auth/callback", h.callback)
+	r.Post("/auth/logout", h.logout)
+	r.Post("/auth/bootstrap", h.bootstrap)
+
 	r.Route("/api/v1", func(api chi.Router) {
+		api.Use(h.requireIdentity)
+
+		api.Get("/auth/me", h.me)
+		api.Post("/auth/can", h.can)
+		api.Post("/auth/logout", h.logout)
+
 		api.Get("/clusters", h.listClusters)
 		api.Route("/clusters/{cluster}", func(c chi.Router) {
 			c.Get("/namespaces", h.listNamespaces)
 			c.Get("/resources/{group}/{version}/{resource}", h.listResources)
 			c.Get("/resources/{group}/{version}/{resource}/{name}", h.getResource)
+		})
+
+		api.Route("/admin", func(a chi.Router) {
+			a.Use(h.requireAdmin)
+			a.Get("/users", h.listUsers)
+			a.Post("/users/{id}/status", h.setUserStatus)
+			a.Get("/roles", h.listRoles)
+			a.Get("/clusters", h.listAdminClusters)
+			a.Get("/role-bindings", h.listRoleBindings)
+			a.Put("/role-bindings", h.putUserAccess)
+			a.Delete("/role-bindings/{id}", h.deleteRoleBinding)
 		})
 	})
 

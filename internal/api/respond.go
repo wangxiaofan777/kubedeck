@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 )
@@ -35,4 +37,28 @@ func writePlain(w http.ResponseWriter, status int, body string) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(body))
+}
+
+// maxJSONBody 是普通 JSON 请求体上限，避免超大请求耗尽内存。
+const maxJSONBody = 1 << 20
+
+// decodeJSON 解析 JSON 请求体；失败时直接写统一错误响应并返回 false。
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			WriteError(r.Context(), w, NewError(CodePayloadTooLarge, "请求体超过 1 MB 上限"))
+			return false
+		}
+		if errors.Is(err, io.EOF) {
+			WriteError(r.Context(), w, NewError(CodeInvalidArgument, "请求体不能为空"))
+			return false
+		}
+		WriteError(r.Context(), w, NewError(CodeInvalidArgument, "请求体不是合法的 JSON"))
+		return false
+	}
+	return true
 }

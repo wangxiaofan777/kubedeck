@@ -21,6 +21,10 @@ func (f *fakeTransport) List(context.Context, schema.GroupVersionResource, strin
 func (f *fakeTransport) Get(context.Context, schema.GroupVersionResource, string, string) (*unstructured.Unstructured, error) {
 	return &unstructured.Unstructured{}, nil
 }
+func (f *fakeTransport) ReviewAccess(context.Context, AccessRequest) (AccessResult, error) {
+	return AccessResult{Allowed: true}, nil
+}
+func (f *fakeTransport) TransportFor(UserRef) (Transport, error) { return f, nil }
 
 func TestRegistryAddGetOrder(t *testing.T) {
 	r := NewRegistry()

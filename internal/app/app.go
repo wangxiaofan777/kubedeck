@@ -17,6 +17,7 @@ import (
 	"github.com/kubedeck/kubedeck/internal/crypto"
 	"github.com/kubedeck/kubedeck/internal/domain"
 	"github.com/kubedeck/kubedeck/internal/kube"
+	"github.com/kubedeck/kubedeck/internal/metrics"
 	"github.com/kubedeck/kubedeck/internal/store"
 )
 
@@ -350,7 +351,17 @@ func buildKeyRing(cfg config.Config) (*crypto.Ring, error) {
 
 // clusterHealth 周期探测全部集群，更新三态与版本；启动后立即执行一次。
 func clusterHealth(ctx context.Context, mgr *cluster.Manager, logger *slog.Logger) {
-	mgr.ProbeAll(ctx)
+	probe := func() {
+		mgr.ProbeAll(ctx)
+		for _, c := range mgr.Registry().All() {
+			up := 0.0
+			if c.Info(ctx).Status == kube.StatusHealthy {
+				up = 1
+			}
+			metrics.ClusterUp.WithLabelValues(c.Name()).Set(up)
+		}
+	}
+	probe()
 	ticker := time.NewTicker(healthCheckPeriod)
 	defer ticker.Stop()
 	for {
@@ -358,7 +369,7 @@ func clusterHealth(ctx context.Context, mgr *cluster.Manager, logger *slog.Logge
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			mgr.ProbeAll(ctx)
+			probe()
 		}
 	}
 }

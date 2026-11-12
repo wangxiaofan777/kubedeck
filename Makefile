@@ -13,7 +13,7 @@ STATICCHECK ?= staticcheck
 # 显式包范围：避免扫描 web/node_modules（npm 依赖里可能带 Go 文件）。
 PKGS := ./cmd/... ./internal/...
 
-.PHONY: all build web server dev fmt lint test test-db db web-check check web-dev clean
+.PHONY: all build web server dev fmt lint test test-db db web-check check web-dev clean test-rules
 
 # 本地默认：先检查再构建。CI 使用各自独立的目标。
 all: check build
@@ -59,6 +59,10 @@ test: $(KEEP)
 
 test-db: $(KEEP)
 	set -a; . ./.testenv/db.env; set +a; $(GO) test ./internal/store/ -v
+
+# PrometheusRule 语法与告警触发单元测试（需要 python3 + PyYAML + promtool）。
+test-rules:
+	bash scripts/check-prometheus-rules.sh
 
 db:
 	bash scripts/dev-db.sh

@@ -75,7 +75,11 @@ func TestStreamSubscribeAndIncrementalEvent(t *testing.T) {
 	}}
 	watcher.Add(pod)
 
+	start := time.Now()
 	frame := readFrame(t, conn)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("event latency = %v, want <= 2s", elapsed)
+	}
 	if frame["type"] != "event" || frame["eventType"] != "ADDED" || frame["id"] != "s1" {
 		t.Fatalf("event frame = %+v", frame)
 	}

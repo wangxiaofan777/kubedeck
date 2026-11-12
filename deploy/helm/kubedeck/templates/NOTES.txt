@@ -1,0 +1,25 @@
+KubeDeck 已安装到命名空间 {{ .Release.Namespace }}。
+
+1. 确认 Pod 就绪：
+   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "kubedeck.fullname" . }}
+
+2. 端口转发访问：
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "kubedeck.fullname" . }} 8080:{{ .Values.service.port }}
+   浏览器打开 http://127.0.0.1:8080
+
+3. 首次使用：
+   - OIDC 模式下，用平台管理员账号完成登录，再通过 /api/v1/admin/bootstrap 创建首个管理员记录。
+   - 确保目标集群内的平台 ServiceAccount 仅具备 users/groups/serviceaccounts 的 impersonate 权限。
+   - 不要为该 ServiceAccount 绑定 cluster-admin。
+
+{{- if .Values.dev.enabled }}
+
+警告：当前启用 dev 模式（挂载 kubeconfig），跳过 OIDC 与权限校验，只能用于本地验收。
+不要把该配置用于可从网络访问的环境。
+{{- end }}
+
+{{- if .Values.secrets.existingSecret }}
+使用已有 Secret：{{ .Values.secrets.existingSecret }}。请确认包含 KUBEDECK_DATABASE_URL 与 KUBEDECK_MASTER_KEY。
+{{- else if not .Values.secrets.masterKey }}
+警告：未设置 secrets.masterKey，Pod 会因主密钥缺失而启动失败。请通过 --set 或 values 文件提供。
+{{- end }}

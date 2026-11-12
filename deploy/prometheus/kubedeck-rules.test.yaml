@@ -1,0 +1,33 @@
+rule_files:
+  - /tmp/kubedeck-rules-groups.yaml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'kubedeck_cluster_up{cluster="prod"}'
+        values: '0x12'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: KubeDeckClusterUnreachable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              cluster: prod
+            exp_annotations:
+              summary: 集群 prod 连续 5 分钟不可达
+              description: 健康探测失败；请检查网络、凭据与目标 apiserver。
+  - interval: 1m
+    input_series:
+      - series: 'kubedeck_audit_degraded'
+        values: '1x12'
+      - series: 'kubedeck_audit_queue_depth'
+        values: '1500x12'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: KubeDeckAuditBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: 审计队列积压或写入降级
+              description: 审计写入可能失败；检查 PostgreSQL 与审计补偿队列。

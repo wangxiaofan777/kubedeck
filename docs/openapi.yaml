@@ -1,0 +1,832 @@
+openapi: 3.0.3
+info:
+  title: KubeDeck API
+  version: 0.1.0
+  description: |
+    KubeDeck 多集群 Kubernetes 控制台 API。除登录、健康检查与指标端点外，
+    所有接口都要求平台会话 Cookie；资源请求由服务端以当前用户身份
+    Impersonation 到目标集群，最终权限由 apiserver RBAC 判定。
+servers:
+  - url: /
+security:
+  - cookieAuth: []
+tags:
+  - name: auth
+  - name: clusters
+  - name: resources
+  - name: workloads
+  - name: logs
+  - name: realtime
+  - name: audit
+  - name: admin
+  - name: system
+paths:
+  /healthz:
+    get:
+      tags: [system]
+      summary: 进程存活检查
+      security: []
+      responses:
+        "200": { description: alive }
+  /readyz:
+    get:
+      tags: [system]
+      summary: 就绪检查（数据库连通性）
+      security: []
+      responses:
+        "200": { description: ready }
+        "503": { description: dependency unavailable }
+  /metrics:
+    get:
+      tags: [system]
+      summary: Prometheus 指标（仅内网）
+      security: []
+      responses:
+        "200":
+          description: Prometheus text exposition
+          content:
+            text/plain:
+              schema: { type: string }
+  /auth/login:
+    get:
+      tags: [auth]
+      summary: 发起 OIDC 登录
+      security: []
+      parameters:
+        - in: query
+          name: returnTo
+          schema: { type: string }
+      responses:
+        "302": { description: redirect to IdP }
+  /auth/callback:
+    get:
+      tags: [auth]
+      summary: OIDC 授权码回调
+      security: []
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema: { type: string }
+        - in: query
+          name: state
+          required: true
+          schema: { type: string }
+      responses:
+        "302": { description: login success redirect }
+        "400": { $ref: "#/components/responses/Error" }
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: 登出并清除会话
+      security: []
+      responses:
+        "204": { description: logged out }
+  /auth/bootstrap:
+    post:
+      tags: [auth]
+      summary: 用一次性令牌创建首个平台管理员
+      security: []
+      parameters:
+        - in: header
+          name: X-Bootstrap-Token
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject]
+              properties:
+                subject: { type: string }
+                email: { type: string }
+                displayName: { type: string }
+      responses:
+        "201": { description: admin created }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      summary: 当前用户、可见集群与平台绑定
+      responses:
+        "200": { description: current identity }
+        "401": { $ref: "#/components/responses/Error" }
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: 登出并清除会话
+      responses:
+        "204": { description: logged out }
+  /api/v1/auth/can:
+    post:
+      tags: [auth]
+      summary: 批量权限预检（SSAR）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [checks]
+              properties:
+                checks:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [cluster, verb, resource]
+                    properties:
+                      cluster: { type: string }
+                      namespace: { type: string }
+                      verb: { type: string }
+                      group: { type: string }
+                      version: { type: string }
+                      resource: { type: string }
+                      subresource: { type: string }
+                      name: { type: string }
+      responses:
+        "200":
+          description: access results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        allowed: { type: boolean }
+                        reason: { type: string }
+  /api/v1/clusters:
+    get:
+      tags: [clusters]
+      summary: 当前用户可见的集群
+      responses:
+        "200": { description: cluster list }
+    post:
+      tags: [clusters, admin]
+      summary: 登记集群（平台管理员）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/ClusterCreateKubeconfig"
+                - $ref: "#/components/schemas/ClusterCreateToken"
+      responses:
+        "201": { description: created }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/clusters/{cluster}:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+    get:
+      tags: [clusters]
+      summary: 集群详情、健康与脱敏凭据
+      responses:
+        "200": { description: cluster detail }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [clusters, admin]
+      summary: 修改展示名与标签
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string }
+                labels:
+                  type: object
+                  additionalProperties: { type: string }
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [clusters, admin]
+      summary: 删除集群登记（不触碰目标集群）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmName]
+              properties:
+                confirmName: { type: string }
+      responses:
+        "204": { description: deleted }
+        "400": { $ref: "#/components/responses/Error" }
+  /api/v1/clusters/{cluster}/health:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+    get:
+      tags: [clusters]
+      summary: 最近一次健康探测
+      responses:
+        "200": { description: health }
+  /api/v1/clusters/{cluster}/credential:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+    get:
+      tags: [clusters, admin]
+      summary: 凭据元数据（不返回明文）
+      responses:
+        "200": { description: credential metadata }
+    put:
+      tags: [clusters, admin]
+      summary: 轮换凭据
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialInput"
+      responses:
+        "200": { description: rotated }
+  /api/v1/clusters/{cluster}/api-resources:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+    get:
+      tags: [resources]
+      summary: 资源发现（容忍部分 API 组失败）
+      responses:
+        "200": { description: discovery }
+  /api/v1/clusters/{cluster}/namespaces:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+    get:
+      tags: [resources]
+      summary: 命名空间列表
+      responses:
+        "200": { description: namespaces }
+  /api/v1/clusters/{cluster}/resources/{group}/{version}/{resource}:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/Group"
+      - $ref: "#/components/parameters/Version"
+      - $ref: "#/components/parameters/ResourceName"
+    get:
+      tags: [resources]
+      summary: 列表
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+        - $ref: "#/components/parameters/LabelSelector"
+        - $ref: "#/components/parameters/FieldSelector"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Continue"
+        - in: query
+          name: sortBy
+          schema: { type: string }
+        - in: query
+          name: order
+          schema: { type: string, enum: [asc, desc] }
+      responses:
+        "200": { description: list }
+        "400": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [resources]
+      summary: 批量删除
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [names]
+              properties:
+                names:
+                  type: array
+                  items: { type: string }
+                propagationPolicy: { type: string }
+      responses:
+        "200": { description: per-item results }
+  /api/v1/clusters/{cluster}/resources/{group}/{version}/{resource}/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/Group"
+      - $ref: "#/components/parameters/Version"
+      - $ref: "#/components/parameters/ResourceName"
+      - $ref: "#/components/parameters/ObjectName"
+    get:
+      tags: [resources]
+      summary: 详情或 YAML（?format=yaml）
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+        - in: query
+          name: format
+          schema: { type: string, enum: [json, yaml] }
+      responses:
+        "200": { description: object }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [resources]
+      summary: 提交 YAML（dryRun / 正常）
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+        - in: query
+          name: dryRun
+          schema: { type: string, enum: [All] }
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema: { type: string }
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { description: updated }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [resources]
+      summary: 删除单个对象
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+        - in: query
+          name: propagationPolicy
+          schema: { type: string, enum: [Background, Foreground, Orphan] }
+      responses:
+        "204": { description: deleted }
+  /api/v1/clusters/{cluster}/resources/{group}/{version}/{resource}/{name}/detail:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/Group"
+      - $ref: "#/components/parameters/Version"
+      - $ref: "#/components/parameters/ResourceName"
+      - $ref: "#/components/parameters/ObjectName"
+    get:
+      tags: [resources]
+      summary: 对象与最近事件
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+      responses:
+        "200": { description: detail }
+  /api/v1/clusters/{cluster}/resources/{group}/{version}/{resource}/{name}/diff:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/Group"
+      - $ref: "#/components/parameters/Version"
+      - $ref: "#/components/parameters/ResourceName"
+      - $ref: "#/components/parameters/ObjectName"
+    post:
+      tags: [resources]
+      summary: 服务端 Diff 与不可变字段提示
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema: { type: string }
+      responses:
+        "200": { description: diff }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/clusters/{cluster}/workloads/{group}/{version}/{resource}/{name}/scale:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/Group"
+      - $ref: "#/components/parameters/Version"
+      - $ref: "#/components/parameters/ResourceName"
+      - $ref: "#/components/parameters/ObjectName"
+    post:
+      tags: [workloads]
+      summary: 伸缩副本
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [replicas]
+              properties:
+                replicas: { type: integer, minimum: 0 }
+      responses:
+        "202": { description: operation accepted }
+  /api/v1/clusters/{cluster}/workloads/{group}/{version}/{resource}/{name}/restart:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/Group"
+      - $ref: "#/components/parameters/Version"
+      - $ref: "#/components/parameters/ResourceName"
+      - $ref: "#/components/parameters/ObjectName"
+    post:
+      tags: [workloads]
+      summary: 滚动重启
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+      responses:
+        "202": { description: operation accepted }
+  /api/v1/clusters/{cluster}/workloads/{group}/{version}/{resource}/{name}/history:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/Group"
+      - $ref: "#/components/parameters/Version"
+      - $ref: "#/components/parameters/ResourceName"
+      - $ref: "#/components/parameters/ObjectName"
+    get:
+      tags: [workloads]
+      summary: Deployment 历史版本
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+      responses:
+        "200": { description: revisions }
+  /api/v1/clusters/{cluster}/workloads/{group}/{version}/{resource}/{name}/rollback/diff:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/Group"
+      - $ref: "#/components/parameters/Version"
+      - $ref: "#/components/parameters/ResourceName"
+      - $ref: "#/components/parameters/ObjectName"
+    get:
+      tags: [workloads]
+      summary: 回滚差异预览
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+        - in: query
+          name: revision
+          required: true
+          schema: { type: integer }
+      responses:
+        "200": { description: diff }
+  /api/v1/clusters/{cluster}/workloads/{group}/{version}/{resource}/{name}/rollback:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/Group"
+      - $ref: "#/components/parameters/Version"
+      - $ref: "#/components/parameters/ResourceName"
+      - $ref: "#/components/parameters/ObjectName"
+    post:
+      tags: [workloads]
+      summary: 回滚到指定 revision
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision: { type: integer }
+      responses:
+        "200": { description: rolled back }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/v1/clusters/{cluster}/workloads/{group}/{version}/{resource}/{name}/pause:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/Group"
+      - $ref: "#/components/parameters/Version"
+      - $ref: "#/components/parameters/ResourceName"
+      - $ref: "#/components/parameters/ObjectName"
+    post:
+      tags: [workloads]
+      summary: 暂停滚动更新
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+      responses:
+        "200": { description: paused }
+  /api/v1/clusters/{cluster}/workloads/{group}/{version}/{resource}/{name}/resume:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/Group"
+      - $ref: "#/components/parameters/Version"
+      - $ref: "#/components/parameters/ResourceName"
+      - $ref: "#/components/parameters/ObjectName"
+    post:
+      tags: [workloads]
+      summary: 恢复滚动更新
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+      responses:
+        "200": { description: resumed }
+  /api/v1/clusters/{cluster}/pods/{namespace}/{name}/evict:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/NamespacePath"
+      - in: path
+        name: name
+        required: true
+        schema: { type: string }
+    post:
+      tags: [workloads]
+      summary: 驱逐 Pod（受 PDB 约束）
+      responses:
+        "202": { description: eviction accepted }
+        "409": { description: blocked by PDB }
+  /api/v1/clusters/{cluster}/pods/{namespace}/{name}/log:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - $ref: "#/components/parameters/NamespacePath"
+      - in: path
+        name: name
+        required: true
+        schema: { type: string }
+    get:
+      tags: [logs]
+      summary: Pod 日志（流式）
+      parameters:
+        - in: query
+          name: container
+          schema: { type: string }
+        - in: query
+          name: tailLines
+          schema: { type: integer }
+        - in: query
+          name: sinceSeconds
+          schema: { type: integer }
+        - in: query
+          name: previous
+          schema: { type: boolean }
+        - in: query
+          name: follow
+          schema: { type: boolean }
+        - in: query
+          name: timestamps
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: log stream
+          content:
+            text/plain:
+              schema: { type: string }
+  /api/v1/clusters/{cluster}/events:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+    get:
+      tags: [resources]
+      summary: 事件列表
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+        - in: query
+          name: kind
+          schema: { type: string }
+        - in: query
+          name: name
+          schema: { type: string }
+      responses:
+        "200": { description: events }
+  /api/v1/clusters/{cluster}/operations/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [workloads]
+      summary: 操作进度
+      responses:
+        "200": { description: operation }
+  /api/v1/clusters/{cluster}/stream:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+    get:
+      tags: [realtime]
+      summary: WebSocket 多路复用订阅
+      responses:
+        "101": { description: switching protocols }
+        "429": { description: connection quota exceeded }
+  /api/v1/admin/users:
+    get:
+      tags: [admin]
+      summary: 用户列表
+      parameters:
+        - in: query
+          name: query
+          schema: { type: string }
+      responses:
+        "200": { description: users }
+  /api/v1/admin/users/{id}/status:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+    post:
+      tags: [admin]
+      summary: 启用/禁用用户
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [active, disabled] }
+      responses:
+        "200": { description: updated }
+  /api/v1/admin/roles:
+    get:
+      tags: [admin]
+      summary: 平台角色
+      responses:
+        "200": { description: roles }
+  /api/v1/admin/clusters:
+    get:
+      tags: [admin]
+      summary: 管理视角的集群列表
+      responses:
+        "200": { description: clusters }
+  /api/v1/admin/role-bindings:
+    get:
+      tags: [admin]
+      summary: 角色绑定列表
+      responses:
+        "200": { description: bindings }
+    put:
+      tags: [admin]
+      summary: 设置用户集群访问与角色
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { description: updated }
+  /api/v1/admin/role-bindings/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+    delete:
+      tags: [admin]
+      summary: 删除角色绑定
+      responses:
+        "204": { description: deleted }
+  /api/v1/admin/audit-logs:
+    get:
+      tags: [audit]
+      summary: 审计查询
+      parameters:
+        - $ref: "#/components/parameters/ClusterQuery"
+        - in: query
+          name: actor
+          schema: { type: string }
+        - in: query
+          name: resource
+          schema: { type: string }
+        - in: query
+          name: result
+          schema: { type: string }
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200": { description: audit page }
+  /api/v1/admin/audit-logs/verify:
+    get:
+      tags: [audit]
+      summary: 校验审计哈希链
+      responses:
+        "200": { description: verification result }
+  /api/v1/admin/audit-logs/export:
+    get:
+      tags: [audit]
+      summary: 导出审计
+      parameters:
+        - $ref: "#/components/parameters/ClusterQuery"
+        - in: query
+          name: format
+          schema: { type: string, enum: [csv, json] }
+        - in: query
+          name: actor
+          schema: { type: string }
+        - in: query
+          name: resource
+          schema: { type: string }
+        - in: query
+          name: result
+          schema: { type: string }
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+      responses:
+        "200": { description: export file }
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: kubedeck_session
+  parameters:
+    Cluster:
+      in: path
+      name: cluster
+      required: true
+      schema: { type: string }
+    Group:
+      in: path
+      name: group
+      required: true
+      description: core 组使用 `_`
+      schema: { type: string }
+    Version:
+      in: path
+      name: version
+      required: true
+      schema: { type: string }
+    ResourceName:
+      in: path
+      name: resource
+      required: true
+      schema: { type: string }
+    ObjectName:
+      in: path
+      name: name
+      required: true
+      schema: { type: string }
+    NamespacePath:
+      in: path
+      name: namespace
+      required: true
+      schema: { type: string }
+    NamespaceQuery:
+      in: query
+      name: namespace
+      schema: { type: string }
+    ClusterQuery:
+      in: query
+      name: cluster
+      schema: { type: string }
+    LabelSelector:
+      in: query
+      name: labelSelector
+      schema: { type: string }
+    FieldSelector:
+      in: query
+      name: fieldSelector
+      schema: { type: string }
+    Limit:
+      in: query
+      name: limit
+      schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+    Continue:
+      in: query
+      name: continue
+      schema: { type: string }
+  responses:
+    Error:
+      description: 统一错误模型
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: object }
+        requestId: { type: string }
+    CredentialInput:
+      type: object
+      properties:
+        kubeconfig: { type: string }
+        server: { type: string }
+        token: { type: string }
+        caData: { type: string }
+        insecureSkipTLSVerify: { type: boolean }
+    ClusterCreateKubeconfig:
+      allOf:
+        - $ref: "#/components/schemas/ClusterCreateBase"
+        - type: object
+          properties:
+            kubeconfig: { type: string }
+    ClusterCreateToken:
+      allOf:
+        - $ref: "#/components/schemas/ClusterCreateBase"
+        - $ref: "#/components/schemas/CredentialInput"
+    ClusterCreateBase:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        displayName: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }

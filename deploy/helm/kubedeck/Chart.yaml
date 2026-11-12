@@ -1,0 +1,14 @@
+apiVersion: v2
+name: kubedeck
+description: KubeDeck 多集群 Kubernetes 管理控制台
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.34.0-0"
+home: https://github.com/kubedeck/kubedeck
+sources:
+  - https://github.com/kubedeck/kubedeck
+keywords:
+  - kubernetes
+  - console
+  - multi-cluster

@@ -6,46 +6,36 @@
 
 ## 当前状态
 
-截至 2026-11，已完成「可运行骨架 + 数据层 + 只读控制台 + 工程基线」：
+MVP 功能已完成并通过本地 k3s 端到端验收（2026-11-12）：
 
-| 已完成 | 说明 |
+| 能力 | 状态 |
 |---|---|
-| 服务端骨架 | chi 路由、统一错误模型、请求中间件、优雅退出、`/healthz` 与 `/readyz` |
-| 数据层 | PostgreSQL 迁移、审计月分区与哈希链、AES-256-GCM 凭据加密、用户/集群/绑定仓储 |
-| 只读控制台 | 集群与命名空间切换、13 类资源列表、详情抽屉、实时 YAML |
-| 工程基线 | Makefile、staticcheck、ESLint/Prettier、CI（含 PostgreSQL 集成测试） |
+| 身份与授权 | OIDC + PKCE、服务端会话、Impersonation、SSAR 预检、首管理员引导 |
+| 多集群接入 | 登记/轮换/删除、凭据 AES-256-GCM、健康探测、1.34–1.37 版本校验 |
+| 资源浏览 | discovery（容忍部分失败）、分页/过滤/排序、详情/事件、YAML 编辑与 Diff |
+| 工作负载 | 伸缩、重启、历史/回滚、暂停/恢复、Pod 驱逐、操作进度 |
+| 日志与实时 | 多容器日志、跟随/暂停/过滤；WebSocket 多路复用、续传/resync |
+| 审计 | 异步写入、哈希链校验、查询与 CSV/JSON 导出 |
+| 控制台 | 深链接、权限组件、虚拟滚动、全局搜索、空/错/降级态 |
+| 部署 | Helm Chart、最小权限 SA、Prometheus 指标与告警、运维/备份/发布文档 |
 
-尚未实现（按 `openspec/changes/add-kubedeck-mvp/tasks.md`）：
+完整任务进度见 [`openspec/changes/add-kubedeck-mvp/tasks.md`](openspec/changes/add-kubedeck-mvp/tasks.md)。
 
-- OIDC 登录、会话、Impersonation 透传、权限预检（3.x）
-- 集群登记写接口与健康探测（4.x）
-- YAML 提交、伸缩/重启/回滚/删除（5.x–6.x）
-- 日志与事件（7.x）、实时推送（8.x）、审计埋点（9.x）、完整控制台（10.x）
-
-> **安全提示**：当前开发模式用本地 kubeconfig 直连集群，**没有登录与权限校验**，只能在本机运行，禁止暴露到网络。
+> **安全提示**：dev 模式用本地 kubeconfig 直连集群，**没有登录与权限校验**，只能在本机运行，禁止暴露到网络。生产请使用 OIDC + HTTPS。
 
 ## 快速开始
 
-前置依赖：
-
-| 项 | 版本 | 用途 |
-|---|---|---|
-| Go | 1.27 | 后端构建与测试 |
-| Node.js | 24 | 前端构建（Windows 侧或 WSL 内均可） |
-| PostgreSQL | 15+ | 平台元数据与审计 |
-| k3s | 1.34–1.37 | 本地测试集群（可选，但看资源列表需要） |
+前置依赖：Go 1.27、Node.js 24、PostgreSQL 15+、k3s 1.34–1.37（可选，但看资源列表需要）。
 
 ```bash
 # 1) 初始化本地数据库（幂等；连接串写入 .testenv/db.env）
 wsl.exe -d Ubuntu -u root -- bash -lc 'cd /mnt/d/AI_Coding/kubedeck && bash scripts/dev-db.sh'
 
-# 2) 构建前端（Windows 侧）
-cd web && npm ci --no-audit --no-fund && npm run build
-
-# 3) 构建后端（WSL 内；make 会自动找到 /usr/local/go/bin/go）
+# 2) 构建前端与后端
+cd web && npm ci --no-audit --no-fund && npm run build && cd ..
 wsl.exe -d Ubuntu -u root -- bash -lc 'cd /mnt/d/AI_Coding/kubedeck && make server'
 
-# 4) 启动（WSL 内；需要 k3s 与 .testenv/k3s.yaml）
+# 3) 启动（WSL 内；需要 k3s 与 .testenv/k3s.yaml）
 wsl.exe -d Ubuntu -u root -- bash -lc '
   cd /mnt/d/AI_Coding/kubedeck &&
   set -a && . ./.testenv/db.env && set +a &&
@@ -55,63 +45,61 @@ wsl.exe -d Ubuntu -u root -- bash -lc '
 '
 ```
 
-浏览器打开 <http://localhost:8080>。完整的 k3s 安装、镜像加速与故障排查见 [docs/local-environment.md](docs/local-environment.md)。
+浏览器打开 <http://localhost:8080>。生产部署见 [docs/deployment.md](docs/deployment.md)，本地环境见 [docs/local-environment.md](docs/local-environment.md)。
 
 ## 目录结构
 
 ```
 .
-├── cmd/server/                  # 服务端入口：配置、日志、信号，其余交给 internal/app
+├── cmd/server/                  # 服务端入口
 ├── internal/
-│   ├── app/                     # 依赖组装与生命周期（HTTP + 后台任务 + 数据库）
-│   ├── api/                     # 路由、handler、错误模型、中间件、静态资源
-│   ├── config/                  # 环境变量与 YAML 配置，启动前校验
-│   ├── crypto/                  # AES-256-GCM 凭据加密与密钥版本
-│   ├── domain/                  # 领域模型与领域错误
-│   ├── kube/                    # ClusterTransport、Direct 实现、集群注册表
-│   └── store/                   # PostgreSQL 连接、迁移、仓储
-├── web/
-│   ├── src/app/                 # Providers 与控制台外壳
-│   ├── src/features/            # clusters / namespaces / resources
-│   ├── src/components/          # 资源表格、详情抽屉、错误告警
-│   └── src/lib/                 # API 客户端与格式化工具
-├── internal/webui/dist/         # Vite 构建产物（仅 .gitkeep 入库，供 go:embed）
-├── scripts/                     # 本地开发脚本（数据库初始化）
-├── verify/                      # 技术验证程序（独立 Go module）
-├── docs/                        # 环境手册与文档索引
-└── openspec/                    # 规格、设计与实施任务
+│   ├── app/                     # 依赖组装与生命周期
+│   ├── api/                     # 路由、handler、中间件、WebSocket、审计埋点
+│   ├── audit/                   # 异步审计写入与补偿
+│   ├── auth/                    # OIDC、会话、Impersonation 身份
+│   ├── cluster/                 # 集群登记、凭据、健康探测
+│   ├── crypto/                  # AES-256-GCM 与密钥版本
+│   ├── kube/                    # ClusterTransport、Direct 实现、注册表
+│   ├── metrics/                 # Prometheus 指标
+│   └── store/                   # PostgreSQL 迁移与仓储
+├── web/                         # React 控制台
+├── deploy/helm/kubedeck/        # Helm Chart
+├── deploy/prometheus/           # 告警规则
+├── docs/                        # 部署、运维、备份、安全、发布文档
+├── verify/                      # 三项技术验证程序
+└── openspec/                    # 规格、设计与任务
 ```
 
 ## 常用命令
 
 | 命令 | 作用 |
 |---|---|
-| `make build` | 构建前端 + 后端单二进制（需要 npm 可用） |
-| `make server` | 只构建后端；依赖 `internal/webui/dist` 占位，可用于后端联调 |
-| `make web-dev` | 启动 Vite dev server（`/api` 代理到 8080） |
-| `make test` | 后端单元测试（数据层用例在无数据库时跳过） |
-| `make test-db` | 数据层集成测试（连接 `.testenv/db.env` 中的 PostgreSQL） |
-| `make lint` | gofmt 检查 + `go vet` + `staticcheck` |
-| `make check` | 后端 lint/测试 + 前端 lint/typecheck（提交前入口） |
-| `make clean` | 清理构建产物并保留 `internal/webui/dist/.gitkeep` |
-| `make db` | 创建/重置本地数据库角色与库 |
+| `make build` | 构建前端 + 后端单二进制 |
+| `make server` | 只构建后端（依赖 dist 占位） |
+| `make web-dev` | Vite dev server（`/api` 代理到 8080） |
+| `make test` | 后端单元测试 |
+| `make test-db` | 数据层集成测试（真实 PostgreSQL） |
+| `make lint` | gofmt + `go vet` + `staticcheck` |
+| `make check` | 后端 lint/测试 + 前端 lint/typecheck |
+| `make clean` | 清理产物并保留 `internal/webui/dist/.gitkeep` |
 
 前端单独命令：`npm run lint`、`npm run typecheck`、`npm run format`、`npm run build`。
 
 ## 技术栈
 
-- **后端**：Go 1.27、client-go v0.37.2（dynamic client + discovery）、chi、pgx v5
-- **前端**：React 18、TypeScript、Ant Design 5、TanStack Query 5、Vite 5
+- **后端**：Go 1.27、client-go v0.37.2（dynamic client + discovery + watch）、chi、pgx v5
+- **前端**：React 18、TypeScript、Ant Design 5、TanStack Query 5、Monaco、Vite 5
 - **存储**：PostgreSQL 15+（平台元数据与审计；集群资源状态不入库）
-- **授权**：Impersonation 透传 + Kubernetes 原生 RBAC（后续任务）
-- **部署**：单二进制（前端 `go:embed`）+ Docker/Helm（Helm 待实现）
+- **授权**：Impersonation 透传 + Kubernetes 原生 RBAC
+- **部署**：单二进制（前端 `go:embed`）+ Docker + Helm
+- **可观测性**：Prometheus `/metrics`、结构化日志、哈希链审计
 
 ## 测试与质量
 
-- 后端：`make test`；数据层集成测试需 PostgreSQL。
-- 前端：ESLint + Prettier + `tsc --noEmit`。
-- CI：后端（gofmt/vet/staticcheck/`go test -race` + PostgreSQL service）、前端（lint/format/typecheck/build）、镜像构建。
-- 版本兼容矩阵：k3s 1.34 与 1.37 的实测结果见 [docs/local-environment.md §7.1](docs/local-environment.md)。
+- 后端：`make test`；数据层集成测试需 PostgreSQL；列表压测见 `internal/api/load_test.go`。
+- 前端：ESLint + Prettier + `tsc --noEmit` + Vite build。
+- CI：后端 lint/vet/staticcheck/`go test -race` + PostgreSQL；前端 lint/typecheck/build；镜像构建。
+- 版本矩阵：k3s 1.34 与 1.37 实测见 [docs/local-environment.md §7.1](docs/local-environment.md)。
 
 ## OpenSpec
 
@@ -134,6 +122,15 @@ openspec view
 | 文档 | 内容 |
 |---|---|
 | [k8s-console-design.md](k8s-console-design.md) | 产品级设计总纲（架构、API、错误码、容量估算） |
+| [docs/deployment.md](docs/deployment.md) | 生产部署、OIDC、最小权限 SA、主密钥轮换 |
+| [docs/operations.md](docs/operations.md) | 升级/回滚/故障处理/容量 |
+| [docs/backup-restore.md](docs/backup-restore.md) | PostgreSQL 备份、恢复与演练 |
+| [docs/permission-matrix.md](docs/permission-matrix.md) | 平台角色 × 操作 × Kubernetes 权限 |
+| [docs/security-review.md](docs/security-review.md) | 安全自查结论与残余风险 |
+| [docs/alerting.md](docs/alerting.md) | Prometheus 指标与告警规则 |
+| [docs/release-notes.md](docs/release-notes.md) | 版本说明与兼容矩阵 |
+| [docs/release-checklist.md](docs/release-checklist.md) | 发布检查单 |
+| [docs/openapi.yaml](docs/openapi.yaml) | OpenAPI 3 文档（测试保证与路由一致） |
 | [docs/local-environment.md](docs/local-environment.md) | WSL + k3s 环境、数据库、多版本矩阵 |
 | [docs/README.md](docs/README.md) | 文档索引与阅读顺序 |
 | [AGENTS.md](AGENTS.md) | 给 AI 助手与新同学的项目约定 |

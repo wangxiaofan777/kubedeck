@@ -64,6 +64,7 @@ func NewRouter(opts Options) http.Handler {
 	r.Use(RequestID)
 	r.Use(SecurityHeaders)
 	r.Use(Recoverer)
+	r.Use(metricsMiddleware)
 	r.Use(Timeout(DefaultRequestTimeout))
 	r.Use(CORS(opts.AllowedOrigins))
 	r.Use(sameOrigin(opts.AllowedOrigins))
@@ -88,6 +89,7 @@ func NewRouter(opts Options) http.Handler {
 
 	r.Get("/healthz", h.healthz)
 	r.Get("/readyz", h.readyz)
+	r.Get("/metrics", h.metricsHandler)
 
 	// OIDC 跳转与回调必须位于未认证路由。
 	r.Get("/auth/login", h.login)

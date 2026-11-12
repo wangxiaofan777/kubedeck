@@ -1,0 +1,83 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kubedeck
+  labels:
+    app.kubernetes.io/name: kubedeck
+spec:
+  groups:
+    - name: kubedeck.rules
+      rules:
+        - alert: KubeDeckClusterUnreachable
+          expr: kubedeck_cluster_up == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: 集群 {{ $labels.cluster }} 连续 5 分钟不可达
+            description: 健康探测失败；请检查网络、凭据与目标 apiserver。
+
+        - alert: KubeDeckAuditBacklog
+          expr: kubedeck_audit_queue_depth > 1000 or kubedeck_audit_degraded == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: 审计队列积压或写入降级
+            description: 审计写入可能失败；检查 PostgreSQL 与审计补偿队列。
+
+        - alert: KubeDeckAuditDropped
+          expr: increase(kubedeck_audit_dropped_total[5m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: 审计队列溢出，已有记录被丢弃
+            description: 必须立即检查数据库可用性与写入吞吐，审计不可丢。
+
+        - alert: KubeDeckWatchResyncSpike
+          expr: rate(kubedeck_ws_resync_total[5m]) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: 实时订阅重同步频繁
+            description: 可能是 apiserver watch 断流、resourceVersion 过期或慢消费者；检查 apiserver 与网络。
+
+        - alert: KubeDeckListLatencyHigh
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (le) (
+                rate(kubedeck_http_request_duration_seconds_bucket{route=~".*resources.*"}[5m])
+              )
+            ) > 0.3
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: 资源列表 P95 超过 300ms
+            description: 检查 apiserver 负载、请求限速与返回页大小。
+
+        - alert: KubeDeckWSConnectionsAnomaly
+          expr: |
+            kubedeck_ws_connections > 0
+            and
+            abs(kubedeck_ws_connections - avg_over_time(kubedeck_ws_connections[10m])) > 50
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: WebSocket 连接数相对基线异常增长
+            description: 检查是否有页面泄漏连接或异常客户端。
+
+        - alert: KubeDeckHTTP5xx
+          expr: |
+            sum(rate(kubedeck_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(kubedeck_http_requests_total[5m])) > 0.01
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: 5xx 比例超过 1%
+            description: 查看 requestId 日志与 apiserver 错误映射。

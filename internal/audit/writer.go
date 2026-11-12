@@ -80,6 +80,13 @@ func (w *Writer) Degraded() bool {
 	return w.degraded
 }
 
+// Stats 返回异步队列深度、重试数量、累计丢弃数与降级状态，供指标端点使用。
+func (w *Writer) Stats() (queued, retry, dropped int, degraded bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.queue), len(w.retry), w.dropped, w.degraded
+}
+
 // Run 启动后台循环，直到 ctx 结束；退出前尽力刷写剩余记录。
 func (w *Writer) Run(ctx context.Context) {
 	defer close(w.done)

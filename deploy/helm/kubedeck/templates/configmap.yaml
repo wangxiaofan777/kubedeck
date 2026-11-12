@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubedeck.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubedeck.labels" . | nindent 4 }}
+data:
+  KUBEDECK_ADDR: ":8080"
+  KUBEDECK_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  KUBEDECK_MASTER_KEY_VERSION: {{ .Values.config.masterKeyVersion | quote }}
+  KUBEDECK_OIDC_ISSUER: {{ .Values.config.oidc.issuer | quote }}
+  KUBEDECK_OIDC_CLIENT_ID: {{ .Values.config.oidc.clientId | quote }}
+  KUBEDECK_OIDC_REDIRECT_URL: {{ .Values.config.oidc.redirectUrl | quote }}
+  KUBEDECK_OIDC_SCOPES: {{ .Values.config.oidc.scopes | quote }}
+  KUBEDECK_ALLOWED_ORIGINS: {{ .Values.config.allowedOrigins | quote }}
+  KUBEDECK_SESSION_TTL_HOURS: {{ .Values.config.sessionTtlHours | quote }}
+  KUBEDECK_MAX_SESSIONS_PER_USER: {{ .Values.config.maxSessionsPerUser | quote }}
+  KUBEDECK_COOKIE_INSECURE: {{ .Values.config.cookieInsecure | quote }}
+  {{- if .Values.dev.enabled }}
+  KUBEDECK_DEV_CLUSTER_NAME: {{ .Values.dev.clusterName | quote }}
+  KUBEDECK_DEV_USER: {{ .Values.dev.user | quote }}
+  KUBEDECK_DEV_KUBECONFIG: {{ .Values.dev.mountPath | quote }}
+  {{- end }}

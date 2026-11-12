@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-KubeDeck（集群驾驶舱）是一个多集群 Kubernetes Web 管理控制台。**当前已完成服务端骨架、数据层、只读控制台与工程基线；认证、写操作、实时推送尚未实现**（进度以 `openspec/changes/add-kubedeck-mvp/tasks.md` 为准）。
+KubeDeck（集群驾驶舱）是一个多集群 Kubernetes Web 管理控制台。**MVP 已实现并通过本地 k3s 端到端验收：认证与授权、集群接入、资源浏览、YAML 编辑、工作负载操作、日志、实时推送、审计、完整控制台、Helm 部署与运维文档**（进度以 `openspec/changes/add-kubedeck-mvp/tasks.md` 为准）。
 
 ## 先读什么（按顺序）
 
@@ -14,6 +14,7 @@ KubeDeck（集群驾驶舱）是一个多集群 Kubernetes Web 管理控制台�
 4. `openspec/changes/add-kubedeck-mvp/specs/` — 8 个能力的验收标准
 5. `k8s-console-design.md` — 产品级设计总纲（含 API 清单、错误码、WS 协议、容量估算等附录；以 spec 为验收依据）
 6. `docs/local-environment.md` — 动手前先看环境手册
+7. `docs/deployment.md` — 生产部署、OIDC、最小权限与主密钥轮换
 
 ## 工作方式：规格先行
 

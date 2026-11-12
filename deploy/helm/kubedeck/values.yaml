@@ -1,0 +1,162 @@
+# 默认值面向生产：OIDC + 外部 PostgreSQL + 已有 Secret。
+# 本地验收可通过 --set dev.enabled=true 挂载 kubeconfig，仅用于开发环境。
+replicaCount: 1
+
+image:
+  repository: ghcr.io/kubedeck/kubedeck
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # 应用本身不访问所在集群 API；关闭自动挂载，减少令牌暴露面。
+  automountServiceAccountToken: false
+
+rbac:
+  # 仅授予 impersonate users/groups/serviceaccounts，绝不授予 cluster-admin。
+  create: true
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: kubedeck.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+livenessProbe:
+  enabled: true
+  path: /healthz
+  initialDelaySeconds: 10
+  periodSeconds: 20
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  enabled: true
+  path: /readyz
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+autoscaling:
+  # 多副本需要 Ingress 会话亲和（平台会话保存在进程内存）；否则保持单副本。
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  behavior: {}
+
+pdb:
+  enabled: false
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6443
+        - protocol: TCP
+          port: 443
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  relabelings: []
+  metricRelabelings: []
+
+# 非敏感配置（对应 KUBEDECK_* 环境变量）。
+config:
+  logLevel: info
+  masterKeyVersion: 1
+  oidc:
+    issuer: ""
+    clientId: ""
+    redirectUrl: ""
+    scopes: "openid,profile,email,groups"
+  allowedOrigins: ""
+  sessionTtlHours: 8
+  maxSessionsPerUser: 5
+  cookieInsecure: false
+
+# 敏感配置。existingSecret 非空时忽略以下字段，由外部 Secret 提供全部键。
+secrets:
+  existingSecret: ""
+  databaseUrl: ""
+  masterKey: ""
+  previousMasterKey: ""
+  previousMasterKeyVersion: ""
+  oidcClientSecret: ""
+  bootstrapToken: ""
+
+# 仅开发/验收环境：挂载 kubeconfig 以 dev 模式启动。
+dev:
+  enabled: false
+  clusterName: local
+  user: ""
+  kubeconfigSecret: ""
+  kubeconfigKey: kubeconfig
+  mountPath: /etc/kubedeck/kubeconfig
+
+extraEnv: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+topologySpreadConstraints: []

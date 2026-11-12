@@ -18,6 +18,7 @@ import (
 
 	"github.com/kubedeck/kubedeck/internal/auth"
 	"github.com/kubedeck/kubedeck/internal/kube"
+	"github.com/kubedeck/kubedeck/internal/metrics"
 )
 
 const (
@@ -140,12 +141,14 @@ func (h *handlers) acquireWS(userID int64) bool {
 		return false
 	}
 	h.wsCount[userID]++
+	metrics.WSConnections.Inc()
 	return true
 }
 
 func (h *handlers) releaseWS(userID int64) {
 	h.wsMu.Lock()
 	defer h.wsMu.Unlock()
+	metrics.WSConnections.Dec()
 	if h.wsCount[userID] <= 1 {
 		delete(h.wsCount, userID)
 		return
@@ -383,6 +386,7 @@ func (c *streamConn) watchError(id string, err error) {
 }
 
 func (c *streamConn) requestResync(id, reason string) {
+	metrics.WSResync.WithLabelValues(reason).Inc()
 	select {
 	case c.resync <- resyncNotice{ID: id, Reason: reason}:
 	default:

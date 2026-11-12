@@ -49,6 +49,10 @@ type DirectCluster struct {
 	failures  int
 	successes int
 
+	discMu    sync.Mutex
+	discCache DiscoveryResult
+	discAt    time.Time
+
 	mu         sync.Mutex
 	transports map[string]*DirectTransport
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -22,6 +23,7 @@ type fakeTransport struct {
 	list       *unstructured.UnstructuredList
 	object     *unstructured.Unstructured
 	err        error
+	deleteErrs map[string]error
 }
 
 func (f *fakeTransport) Name() string { return f.name }
@@ -49,6 +51,20 @@ func (f *fakeTransport) Get(context.Context, schema.GroupVersionResource, string
 func (f *fakeTransport) ReviewAccess(context.Context, kube.AccessRequest) (kube.AccessResult, error) {
 	return kube.AccessResult{Allowed: true}, nil
 }
+func (f *fakeTransport) Create(context.Context, schema.GroupVersionResource, string, *unstructured.Unstructured, []string) (*unstructured.Unstructured, error) {
+	return f.object, f.err
+}
+func (f *fakeTransport) Update(context.Context, schema.GroupVersionResource, string, *unstructured.Unstructured, []string) (*unstructured.Unstructured, error) {
+	return f.object, f.err
+}
+func (f *fakeTransport) Delete(_ context.Context, _ schema.GroupVersionResource, _ string, name string, _ kube.DeleteOptions) error {
+	if f.deleteErrs != nil {
+		if err, ok := f.deleteErrs[name]; ok {
+			return err
+		}
+	}
+	return f.err
+}
 
 type fakeCluster struct{ t *fakeTransport }
 
@@ -57,6 +73,11 @@ func (c *fakeCluster) Info(context.Context) kube.ClusterInfo {
 	return kube.ClusterInfo{Name: c.t.name, Version: "v1.37.2", Status: kube.StatusHealthy}
 }
 func (c *fakeCluster) TransportFor(kube.UserRef) (kube.Transport, error) { return c.t, nil }
+func (c *fakeCluster) Discovery(context.Context) (kube.DiscoveryResult, error) {
+	return kube.DiscoveryResult{Resources: []kube.APIResource{{
+		Group: "apps", Version: "v1", Resource: "deployments", Kind: "Deployment", Namespaced: true,
+	}}}, nil
+}
 
 type fakeRegistry struct {
 	items map[string]kube.ClusterAccess
@@ -343,5 +364,46 @@ func TestCanBatchReviewWithBinding(t *testing.T) {
 	}
 	if len(resp.Results) != 1 || !resp.Results[0].Allowed {
 		t.Fatalf("results = %+v", resp.Results)
+	}
+}
+
+func TestBatchDeleteReportsPartialFailure(t *testing.T) {
+	transport := &fakeTransport{
+		name: "prod",
+		deleteErrs: map[string]error{
+			"missing": apierrors.NewNotFound(schema.GroupResource{Group: "apps", Resource: "deployments"}, "missing"),
+		},
+	}
+	registry := &fakeRegistry{
+		items: map[string]kube.ClusterAccess{"prod": &fakeCluster{t: transport}},
+		order: []string{"prod"},
+	}
+	router := NewRouter(Options{
+		Registry: registry,
+		Auth:     fakeAuth{authenticated: true, identity: auth.Identity{Subject: "tester", PlatformAdmin: true}},
+	})
+	body := `{"names":["web","missing"],"propagationPolicy":"Foreground","dryRun":true}`
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/clusters/prod/resources/apps/v1/deployments?namespace=default", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Results   []deleteItemResult `json:"results"`
+		Succeeded int                `json:"succeeded"`
+		Failed    int                `json:"failed"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Succeeded != 1 || resp.Failed != 1 || len(resp.Results) != 2 {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if resp.Results[1].Success || resp.Results[1].Code != string(CodeNotFound) {
+		t.Fatalf("missing result = %+v", resp.Results[1])
 	}
 }

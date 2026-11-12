@@ -25,6 +25,18 @@ func (f *fakeTransport) ReviewAccess(context.Context, AccessRequest) (AccessResu
 	return AccessResult{Allowed: true}, nil
 }
 func (f *fakeTransport) TransportFor(UserRef) (Transport, error) { return f, nil }
+func (f *fakeTransport) Discovery(context.Context) (DiscoveryResult, error) {
+	return DiscoveryResult{}, nil
+}
+func (f *fakeTransport) Create(context.Context, schema.GroupVersionResource, string, *unstructured.Unstructured, []string) (*unstructured.Unstructured, error) {
+	return &unstructured.Unstructured{}, nil
+}
+func (f *fakeTransport) Update(context.Context, schema.GroupVersionResource, string, *unstructured.Unstructured, []string) (*unstructured.Unstructured, error) {
+	return &unstructured.Unstructured{}, nil
+}
+func (f *fakeTransport) Delete(context.Context, schema.GroupVersionResource, string, string, DeleteOptions) error {
+	return nil
+}
 
 func TestRegistryAddGetOrder(t *testing.T) {
 	r := NewRegistry()

@@ -69,6 +69,9 @@ type Transport interface {
 	Get(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error)
 	// ReviewAccess 以当前用户身份执行 SelfSubjectAccessReview。
 	ReviewAccess(ctx context.Context, req AccessRequest) (AccessResult, error)
+	Create(ctx context.Context, gvr schema.GroupVersionResource, namespace string, obj *unstructured.Unstructured, dryRun []string) (*unstructured.Unstructured, error)
+	Update(ctx context.Context, gvr schema.GroupVersionResource, namespace string, obj *unstructured.Unstructured, dryRun []string) (*unstructured.Unstructured, error)
+	Delete(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, opts DeleteOptions) error
 }
 
 // ClusterAccess 是注册表持有的集群入口：既能给出与用户无关的健康信息，
@@ -77,4 +80,5 @@ type ClusterAccess interface {
 	Name() string
 	Info(ctx context.Context) ClusterInfo
 	TransportFor(user UserRef) (Transport, error)
+	Discovery(ctx context.Context) (DiscoveryResult, error)
 }

@@ -39,14 +39,14 @@
 
 ## 5. 资源浏览
 
-- [ ] 5.1 实现 discovery 缓存（5 分钟）与部分失败容忍，验证在 metrics API 不可用时仍返回其余资源
-- [ ] 5.2 实现资源列表接口（namespace/label/field/limit-continue），验证 1000 对象分页无重复无遗漏
-- [ ] 5.3 实现资源详情接口（对象 + ownerReferences + 最近事件），验证 Pod 详情字段完整
-- [ ] 5.4 实现 YAML 读取与提交（含 dryRun 预检），验证非法 YAML 返回 422、合法提交返回新 resourceVersion
-- [ ] 5.5 实现提交前 Diff 与不可变字段提示，验证修改 Deployment selector 时在提交前给出提示
-- [ ] 5.6 实现 resourceVersion 冲突处理，验证并发提交第二个请求返回 409 与最新版本
-- [ ] 5.7 实现删除（传播策略）与批量操作，验证部分失败时逐项返回结果且继续执行
-- [ ] 5.8 编写只读用户用例，验证写请求被服务端拒绝（绕过前端场景）
+- [x] 5.1 实现 discovery 缓存（5 分钟）与部分失败容忍，验证在 metrics API 不可用时仍返回其余资源
+- [x] 5.2 实现资源列表接口（namespace/label/field/limit-continue），验证 1000 对象分页无重复无遗漏
+- [x] 5.3 实现资源详情接口（对象 + ownerReferences + 最近事件），验证 Pod 详情字段完整
+- [x] 5.4 实现 YAML 读取与提交（含 dryRun 预检），验证非法 YAML 返回 422、合法提交返回新 resourceVersion
+- [x] 5.5 实现提交前 Diff 与不可变字段提示，验证修改 Deployment selector 时在提交前给出提示
+- [x] 5.6 实现 resourceVersion 冲突处理，验证并发提交第二个请求返回 409 与最新版本
+- [x] 5.7 实现删除（传播策略）与批量操作，验证部分失败时逐项返回结果且继续执行
+- [x] 5.8 编写只读用户用例，验证写请求被服务端拒绝（绕过前端场景）
 
 ## 6. 工作负载操作
 

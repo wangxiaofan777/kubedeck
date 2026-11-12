@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 
@@ -47,6 +48,9 @@ type handlers struct {
 	accessCache    *accessCache
 	ops            *operationStore
 	idem           *idempotencyStore
+	allowedOrigins []string
+	wsMu           sync.Mutex
+	wsCount        map[int64]int
 }
 
 // NewRouter 构建 HTTP 路由。
@@ -72,6 +76,8 @@ func NewRouter(opts Options) http.Handler {
 		accessCache:    newAccessCache(),
 		ops:            newOperationStore(),
 		idem:           newIdempotencyStore(),
+		allowedOrigins: opts.AllowedOrigins,
+		wsCount:        make(map[int64]int),
 	}
 
 	r.Get("/healthz", h.healthz)
@@ -115,6 +121,7 @@ func NewRouter(opts Options) http.Handler {
 			c.Get("/pods/{namespace}/{name}/log", h.podLog)
 			c.Get("/events", h.listEvents)
 			c.Get("/operations/{id}", h.getOperation)
+			c.Get("/stream", h.stream)
 			c.With(h.requireAdmin).Patch("/", h.patchCluster)
 			c.With(h.requireAdmin).Delete("/", h.deleteCluster)
 			c.With(h.requireAdmin).Get("/credential", h.getCredential)

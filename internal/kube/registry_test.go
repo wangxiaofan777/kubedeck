@@ -8,6 +8,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
 )
 
 type fakeTransport struct{ name string }
@@ -49,6 +50,10 @@ func (f *fakeTransport) Evict(context.Context, string, string, *int64) error {
 
 func (f *fakeTransport) Logs(context.Context, string, string, LogOptions) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
+}
+
+func (f *fakeTransport) Watch(context.Context, schema.GroupVersionResource, string, WatchOptions) (watch.Interface, error) {
+	return watch.NewFake(), nil
 }
 
 func TestRegistryAddGetOrder(t *testing.T) {

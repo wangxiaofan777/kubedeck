@@ -12,6 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
 
 	"github.com/kubedeck/kubedeck/internal/auth"
 	"github.com/kubedeck/kubedeck/internal/domain"
@@ -27,6 +28,8 @@ type fakeTransport struct {
 	deleteErrs  map[string]error
 	updateCalls int
 	logBody     string
+	watcher     watch.Interface
+	watchErr    error
 }
 
 func (f *fakeTransport) Name() string { return f.name }
@@ -83,6 +86,16 @@ func (f *fakeTransport) Logs(context.Context, string, string, kube.LogOptions) (
 		body = "log line\n"
 	}
 	return io.NopCloser(strings.NewReader(body)), nil
+}
+
+func (f *fakeTransport) Watch(context.Context, schema.GroupVersionResource, string, kube.WatchOptions) (watch.Interface, error) {
+	if f.watchErr != nil {
+		return nil, f.watchErr
+	}
+	if f.watcher != nil {
+		return f.watcher, nil
+	}
+	return watch.NewFake(), nil
 }
 
 type fakeCluster struct{ t *fakeTransport }

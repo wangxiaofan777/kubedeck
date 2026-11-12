@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
 )
 
@@ -211,4 +212,13 @@ func (t *DirectTransport) Evict(ctx context.Context, namespace, name string, gra
 		Do(ctx).
 		Raw()
 	return err
+}
+
+// Watch 监听资源变化。resourceVersion 由客户端携带以支持断线续传。
+func (t *DirectTransport) Watch(ctx context.Context, gvr schema.GroupVersionResource, namespace string, opts WatchOptions) (watch.Interface, error) {
+	return t.dynamic.Resource(gvr).Namespace(namespace).Watch(ctx, metav1.ListOptions{
+		ResourceVersion: opts.ResourceVersion,
+		LabelSelector:   opts.LabelSelector,
+		FieldSelector:   opts.FieldSelector,
+	})
 }

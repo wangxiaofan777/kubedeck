@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
 )
 
 // 集群可达性状态，与对外 JSON 字段取值保持一致。
@@ -79,6 +80,15 @@ type Transport interface {
 	Evict(ctx context.Context, namespace, name string, gracePeriodSeconds *int64) error
 	// Logs 读取或跟随 Pod 容器日志。调用方负责关闭返回的 reader。
 	Logs(ctx context.Context, namespace, name string, opts LogOptions) (io.ReadCloser, error)
+	// Watch 监听资源变化，用于实时推送。
+	Watch(ctx context.Context, gvr schema.GroupVersionResource, namespace string, opts WatchOptions) (watch.Interface, error)
+}
+
+// WatchOptions 是 watch 参数。
+type WatchOptions struct {
+	ResourceVersion string
+	LabelSelector   string
+	FieldSelector   string
 }
 
 // LogOptions 是 Pod 日志读取参数。

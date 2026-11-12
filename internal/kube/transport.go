@@ -72,6 +72,10 @@ type Transport interface {
 	Create(ctx context.Context, gvr schema.GroupVersionResource, namespace string, obj *unstructured.Unstructured, dryRun []string) (*unstructured.Unstructured, error)
 	Update(ctx context.Context, gvr schema.GroupVersionResource, namespace string, obj *unstructured.Unstructured, dryRun []string) (*unstructured.Unstructured, error)
 	Delete(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, opts DeleteOptions) error
+	// Scale 通过 scale 子资源调整副本数，避免与主体更新冲突。
+	Scale(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, replicas int32) (*unstructured.Unstructured, error)
+	// Evict 通过 policy/v1 Eviction 驱逐 Pod，受 PDB 约束。
+	Evict(ctx context.Context, namespace, name string, gracePeriodSeconds *int64) error
 }
 
 // ClusterAccess 是注册表持有的集群入口：既能给出与用户无关的健康信息，

@@ -1,11 +1,15 @@
 package api
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/kubedeck/kubedeck/internal/auth"
+	"github.com/kubedeck/kubedeck/internal/domain"
 	"github.com/kubedeck/kubedeck/internal/kube"
 )
 
@@ -17,33 +21,56 @@ func (h *handlers) transport(w http.ResponseWriter, r *http.Request) (kube.Trans
 		WriteError(r.Context(), w, NewError(CodeUnauthenticated, "登录状态无效或已过期"))
 		return nil, nil, false
 	}
-	name := chi.URLParam(r, "cluster")
-	namespace := r.URL.Query().Get("namespace")
-
-	allowed, err := h.clusterAccess(r.Context(), id, name, namespace)
+	t, cluster, err := h.transportFor(r.Context(), id, chi.URLParam(r, "cluster"), r.URL.Query().Get("namespace"))
 	if err != nil {
-		WriteError(r.Context(), w, FromPlatformError(err))
-		return nil, nil, false
-	}
-	if !allowed {
-		WriteError(r.Context(), w, NewError(CodeForbidden, "无权访问该集群或命名空间"))
-		return nil, nil, false
-	}
-	cluster, ok := h.cluster(name)
-	if !ok {
-		WriteError(r.Context(), w, NewError(CodeNotFound, "集群不存在"))
-		return nil, nil, false
-	}
-	if info := cluster.Info(r.Context()); info.Status == kube.StatusUnreachable {
-		WriteError(r.Context(), w, NewError(CodeClusterUnreachable, "目标集群不可达，请稍后重试"))
-		return nil, nil, false
-	}
-	t, err := cluster.TransportFor(id.UserRef())
-	if err != nil {
-		WriteError(r.Context(), w, NewError(CodeInternal, "无法建立集群连接"))
+		status, message := transportError(err)
+		WriteError(r.Context(), w, NewError(status, message))
 		return nil, nil, false
 	}
 	return t, cluster, true
+}
+
+// transportFor 是可复用的集群访问入口（操作进度查询等场景使用）。
+func (h *handlers) transportFor(ctx context.Context, id auth.Identity, name, namespace string) (kube.Transport, kube.ClusterAccess, error) {
+	allowed, err := h.clusterAccess(ctx, id, name, namespace)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !allowed {
+		return nil, nil, errForbidden
+	}
+	cluster, ok := h.cluster(name)
+	if !ok {
+		return nil, nil, domain.ErrNotFound
+	}
+	if info := cluster.Info(ctx); info.Status == kube.StatusUnreachable {
+		return nil, nil, errClusterUnreachable
+	}
+	t, err := cluster.TransportFor(id.UserRef())
+	if err != nil {
+		return nil, nil, fmt.Errorf("build transport: %w", err)
+	}
+	return t, cluster, nil
+}
+
+var (
+	errForbidden          = errors.New("api: forbidden")
+	errClusterUnreachable = errors.New("api: cluster unreachable")
+)
+
+func transportError(err error) (ErrorCode, string) {
+	switch {
+	case errors.Is(err, errForbidden):
+		return CodeForbidden, "无权访问该集群或命名空间"
+	case errors.Is(err, domain.ErrNotFound):
+		return CodeNotFound, "集群不存在"
+	case errors.Is(err, errClusterUnreachable):
+		return CodeClusterUnreachable, "目标集群不可达，请稍后重试"
+	case errors.Is(err, domain.ErrConflict):
+		return CodeConflict, "资源状态冲突"
+	default:
+		return CodeInternal, "无法建立集群连接"
+	}
 }
 
 // listClusters 返回当前用户可见的集群及其状态。

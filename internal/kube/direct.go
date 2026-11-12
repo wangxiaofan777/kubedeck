@@ -238,6 +238,7 @@ type DirectTransport struct {
 	dynamic   dynamic.Interface
 	discovery discovery.DiscoveryInterface
 	authz     authzv1.AuthorizationV1Interface
+	rest      rest.Interface
 }
 
 func newDirectTransport(name, server string, cfg *rest.Config) (*DirectTransport, error) {
@@ -259,6 +260,7 @@ func newDirectTransport(name, server string, cfg *rest.Config) (*DirectTransport
 		dynamic:   dyn,
 		discovery: disc,
 		authz:     authz,
+		rest:      disc.RESTClient(),
 	}, nil
 }
 

@@ -18,12 +18,13 @@ import (
 )
 
 type fakeTransport struct {
-	name       string
-	namespaces []string
-	list       *unstructured.UnstructuredList
-	object     *unstructured.Unstructured
-	err        error
-	deleteErrs map[string]error
+	name        string
+	namespaces  []string
+	list        *unstructured.UnstructuredList
+	object      *unstructured.Unstructured
+	err         error
+	deleteErrs  map[string]error
+	updateCalls int
 }
 
 func (f *fakeTransport) Name() string { return f.name }
@@ -55,6 +56,7 @@ func (f *fakeTransport) Create(context.Context, schema.GroupVersionResource, str
 	return f.object, f.err
 }
 func (f *fakeTransport) Update(context.Context, schema.GroupVersionResource, string, *unstructured.Unstructured, []string) (*unstructured.Unstructured, error) {
+	f.updateCalls++
 	return f.object, f.err
 }
 func (f *fakeTransport) Delete(_ context.Context, _ schema.GroupVersionResource, _ string, name string, _ kube.DeleteOptions) error {
@@ -63,6 +65,13 @@ func (f *fakeTransport) Delete(_ context.Context, _ schema.GroupVersionResource,
 			return err
 		}
 	}
+	return f.err
+}
+
+func (f *fakeTransport) Scale(context.Context, schema.GroupVersionResource, string, string, int32) (*unstructured.Unstructured, error) {
+	return f.object, f.err
+}
+func (f *fakeTransport) Evict(context.Context, string, string, *int64) error {
 	return f.err
 }
 
@@ -405,5 +414,121 @@ func TestBatchDeleteReportsPartialFailure(t *testing.T) {
 	}
 	if resp.Results[1].Success || resp.Results[1].Code != string(CodeNotFound) {
 		t.Fatalf("missing result = %+v", resp.Results[1])
+	}
+}
+
+func workloadRouter(transport *fakeTransport) http.Handler {
+	registry := &fakeRegistry{
+		items: map[string]kube.ClusterAccess{"prod": &fakeCluster{t: transport}},
+		order: []string{"prod"},
+	}
+	return NewRouter(Options{
+		Registry: registry,
+		Auth:     fakeAuth{authenticated: true, identity: auth.Identity{UserID: 1, Subject: "tester", PlatformAdmin: true}},
+	})
+}
+
+func deploymentObject() *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata": map[string]any{
+			"name": "web", "namespace": "default", "uid": "uid-1", "generation": int64(2),
+			"annotations": map[string]any{"deployment.kubernetes.io/revision": "3"},
+		},
+		"spec": map[string]any{
+			"replicas": int64(2),
+			"template": map[string]any{"spec": map[string]any{"containers": []any{
+				map[string]any{"name": "web", "image": "nginx:1.25"},
+			}}},
+		},
+		"status": map[string]any{
+			"replicas": int64(2), "readyReplicas": int64(2), "updatedReplicas": int64(2),
+			"observedGeneration": int64(2),
+		},
+	}}
+}
+
+func TestScaleCreatesOperation(t *testing.T) {
+	transport := &fakeTransport{name: "prod", object: deploymentObject()}
+	router := workloadRouter(transport)
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/clusters/prod/workloads/apps/v1/deployments/web/scale?namespace=default",
+		strings.NewReader(`{"replicas":5}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		OperationID    string `json:"operationId"`
+		TargetReplicas int64  `json:"targetReplicas"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OperationID == "" || resp.TargetReplicas != 5 {
+		t.Fatalf("resp = %+v", resp)
+	}
+
+	// 查询操作进度。
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/clusters/prod/operations/"+resp.OperationID, nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("operation status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRestartIsIdempotent(t *testing.T) {
+	transport := &fakeTransport{name: "prod", object: deploymentObject()}
+	router := workloadRouter(transport)
+	doRestart := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/clusters/prod/workloads/apps/v1/deployments/web/restart?namespace=default", nil)
+		req.Header.Set("Idempotency-Key", "restart-1")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	first := doRestart()
+	second := doRestart()
+	if first.Code != http.StatusOK || second.Code != http.StatusOK {
+		t.Fatalf("status = %d/%d body=%s", first.Code, second.Code, second.Body.String())
+	}
+	if transport.updateCalls != 1 {
+		t.Fatalf("update calls = %d, want 1 (idempotent retry)", transport.updateCalls)
+	}
+	if first.Body.String() != second.Body.String() {
+		t.Fatalf("retry response differs: %s vs %s", first.Body.String(), second.Body.String())
+	}
+}
+
+func TestScaleRejectsUnsupportedResource(t *testing.T) {
+	transport := &fakeTransport{name: "prod", object: deploymentObject()}
+	router := workloadRouter(transport)
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/clusters/prod/workloads/_/v1/pods/web/scale?namespace=default",
+		strings.NewReader(`{"replicas":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestRollbackUnavailableRevision(t *testing.T) {
+	transport := &fakeTransport{name: "prod", object: deploymentObject(), list: &unstructured.UnstructuredList{}}
+	router := workloadRouter(transport)
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/clusters/prod/workloads/apps/v1/deployments/web/rollback?namespace=default",
+		strings.NewReader(`{"revision":99}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 }

@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -157,4 +158,57 @@ func (t *DirectTransport) Delete(ctx context.Context, gvr schema.GroupVersionRes
 		}
 	}
 	return t.dynamic.Resource(gvr).Namespace(namespace).Delete(ctx, name, del)
+}
+
+// Scale 通过 scale 子资源调整副本数，返回调整后的工作负载对象。
+func (t *DirectTransport) Scale(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, replicas int32) (*unstructured.Unstructured, error) {
+	scale := map[string]any{
+		"apiVersion": "autoscaling/v1",
+		"kind":       "Scale",
+		"metadata":   map[string]any{"name": name, "namespace": namespace},
+		"spec":       map[string]any{"replicas": int64(replicas)},
+	}
+	body, err := json.Marshal(scale)
+	if err != nil {
+		return nil, err
+	}
+	path := []string{"apis", gvr.Group, gvr.Version, "namespaces", namespace, gvr.Resource, name, "scale"}
+	if gvr.Group == "" {
+		path = []string{"api", gvr.Version, "namespaces", namespace, gvr.Resource, name, "scale"}
+	}
+	_, err = t.rest.Put().
+		AbsPath(path...).
+		SetHeader("Accept", "application/json").
+		SetHeader("Content-Type", "application/json").
+		Body(body).
+		Do(ctx).
+		Raw()
+	if err != nil {
+		return nil, err
+	}
+	return t.dynamic.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+// Evict 通过 pods/eviction 子资源驱逐 Pod；PDB 阻止时返回 apiserver 的 429 错误。
+func (t *DirectTransport) Evict(ctx context.Context, namespace, name string, gracePeriodSeconds *int64) error {
+	eviction := map[string]any{
+		"apiVersion": "policy/v1",
+		"kind":       "Eviction",
+		"metadata":   map[string]any{"name": name, "namespace": namespace},
+	}
+	if gracePeriodSeconds != nil {
+		eviction["deleteOptions"] = map[string]any{"gracePeriodSeconds": *gracePeriodSeconds}
+	}
+	body, err := json.Marshal(eviction)
+	if err != nil {
+		return err
+	}
+	_, err = t.rest.Post().
+		AbsPath("api", "v1", "namespaces", namespace, "pods", name, "eviction").
+		SetHeader("Accept", "application/json").
+		SetHeader("Content-Type", "application/json").
+		Body(body).
+		Do(ctx).
+		Raw()
+	return err
 }

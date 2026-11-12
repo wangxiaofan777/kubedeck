@@ -38,6 +38,13 @@ func (f *fakeTransport) Delete(context.Context, schema.GroupVersionResource, str
 	return nil
 }
 
+func (f *fakeTransport) Scale(context.Context, schema.GroupVersionResource, string, string, int32) (*unstructured.Unstructured, error) {
+	return &unstructured.Unstructured{}, nil
+}
+func (f *fakeTransport) Evict(context.Context, string, string, *int64) error {
+	return nil
+}
+
 func TestRegistryAddGetOrder(t *testing.T) {
 	r := NewRegistry()
 	r.Add(&fakeTransport{name: "b"})

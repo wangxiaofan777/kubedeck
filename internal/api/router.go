@@ -45,6 +45,8 @@ type handlers struct {
 	bootstrapToken string
 	cookieSecure   bool
 	accessCache    *accessCache
+	ops            *operationStore
+	idem           *idempotencyStore
 }
 
 // NewRouter 构建 HTTP 路由。
@@ -68,6 +70,8 @@ func NewRouter(opts Options) http.Handler {
 		bootstrapToken: opts.BootstrapToken,
 		cookieSecure:   opts.CookieSecure,
 		accessCache:    newAccessCache(),
+		ops:            newOperationStore(),
+		idem:           newIdempotencyStore(),
 	}
 
 	r.Get("/healthz", h.healthz)
@@ -100,6 +104,15 @@ func NewRouter(opts Options) http.Handler {
 			c.Delete("/resources/{group}/{version}/{resource}/{name}", h.deleteResource)
 			c.Get("/resources/{group}/{version}/{resource}/{name}/detail", h.getResourceDetail)
 			c.Post("/resources/{group}/{version}/{resource}/{name}/diff", h.diffResource)
+			c.Post("/workloads/{group}/{version}/{resource}/{name}/scale", h.scaleWorkload)
+			c.Post("/workloads/{group}/{version}/{resource}/{name}/restart", h.restartWorkload)
+			c.Get("/workloads/{group}/{version}/{resource}/{name}/history", h.workloadHistory)
+			c.Get("/workloads/{group}/{version}/{resource}/{name}/rollback/diff", h.rollbackDiff)
+			c.Post("/workloads/{group}/{version}/{resource}/{name}/rollback", h.rollbackWorkload)
+			c.Post("/workloads/{group}/{version}/{resource}/{name}/pause", h.pauseWorkload)
+			c.Post("/workloads/{group}/{version}/{resource}/{name}/resume", h.resumeWorkload)
+			c.Post("/pods/{namespace}/{name}/evict", h.evictPod)
+			c.Get("/operations/{id}", h.getOperation)
 			c.With(h.requireAdmin).Patch("/", h.patchCluster)
 			c.With(h.requireAdmin).Delete("/", h.deleteCluster)
 			c.With(h.requireAdmin).Get("/credential", h.getCredential)

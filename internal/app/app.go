@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kubedeck/kubedeck/internal/api"
+	"github.com/kubedeck/kubedeck/internal/audit"
 	"github.com/kubedeck/kubedeck/internal/auth"
 	"github.com/kubedeck/kubedeck/internal/cluster"
 	"github.com/kubedeck/kubedeck/internal/config"
@@ -74,6 +75,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		pinger = st
 	}
 
+	auditWriter := audit.NewWriter(st, logger)
 	opts := api.Options{
 		AllowedOrigins: cfg.AllowedOrigins,
 		Registry:       registry,
@@ -82,10 +84,12 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		ClusterAdmin:   clusterMgr,
 		BootstrapToken: cfg.BootstrapToken,
 		CookieSecure:   !cfg.CookieInsecure,
+		Audit:          auditWriter,
 	}
 	if st != nil {
 		opts.AuthStore = st
 		opts.AdminStore = st
+		opts.AuditStore = st
 	}
 
 	srv := &http.Server{
@@ -111,6 +115,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}))
 	workers = append(workers, startWorker(runCtx, func(ctx context.Context) {
 		clusterHealth(ctx, clusterMgr, logger)
+	}))
+	workers = append(workers, startWorker(runCtx, func(ctx context.Context) {
+		auditWriter.Run(ctx)
 	}))
 
 	errCh := make(chan error, 1)

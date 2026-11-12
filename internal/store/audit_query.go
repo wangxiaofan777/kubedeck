@@ -30,8 +30,8 @@ type AuditFilter struct {
 	Offset       int
 }
 
-// QueryAudit 按时间倒序查询审计记录。
-func (s *Store) QueryAudit(ctx context.Context, f AuditFilter) ([]domain.AuditEntry, error) {
+// auditWhere 构造过滤条件并返回参数占位符。
+func auditWhere(f AuditFilter) (string, []any) {
 	var (
 		where []string
 		args  []any
@@ -58,11 +58,25 @@ func (s *Store) QueryAudit(ctx context.Context, f AuditFilter) ([]domain.AuditEn
 	if f.Result != "" {
 		add("result = $%d", f.Result)
 	}
-
-	clause := ""
-	if len(where) > 0 {
-		clause = " WHERE " + strings.Join(where, " AND ")
+	if len(where) == 0 {
+		return "", args
 	}
+	return " WHERE " + strings.Join(where, " AND "), args
+}
+
+// CountAudit 返回满足条件的记录数。
+func (s *Store) CountAudit(ctx context.Context, f AuditFilter) (int, error) {
+	clause, args := auditWhere(f)
+	var n int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM audit_logs`+clause, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: count audit logs: %w", err)
+	}
+	return n, nil
+}
+
+// QueryAudit 按时间倒序查询审计记录。
+func (s *Store) QueryAudit(ctx context.Context, f AuditFilter) ([]domain.AuditEntry, error) {
+	clause, args := auditWhere(f)
 	limit, offset := pageArgs(f.Limit, f.Offset)
 	args = append(args, limit, offset)
 

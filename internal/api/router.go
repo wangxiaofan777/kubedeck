@@ -32,6 +32,8 @@ type Options struct {
 	AuthStore      AuthStore
 	AdminStore     AdminStore
 	ClusterAdmin   ClusterAdmin
+	Audit          AuditWriter
+	AuditStore     AuditStore
 	BootstrapToken string
 	CookieSecure   bool
 }
@@ -43,6 +45,8 @@ type handlers struct {
 	authStore      AuthStore
 	adminStore     AdminStore
 	clusterAdmin   ClusterAdmin
+	audit          AuditWriter
+	auditStore     AuditStore
 	bootstrapToken string
 	cookieSecure   bool
 	accessCache    *accessCache
@@ -71,6 +75,8 @@ func NewRouter(opts Options) http.Handler {
 		authStore:      opts.AuthStore,
 		adminStore:     opts.AdminStore,
 		clusterAdmin:   opts.ClusterAdmin,
+		audit:          opts.Audit,
+		auditStore:     opts.AuditStore,
 		bootstrapToken: opts.BootstrapToken,
 		cookieSecure:   opts.CookieSecure,
 		accessCache:    newAccessCache(),
@@ -91,6 +97,7 @@ func NewRouter(opts Options) http.Handler {
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(h.requireIdentity)
+		api.Use(h.auditRequests)
 
 		api.Get("/auth/me", h.me)
 		api.Post("/auth/can", h.can)
@@ -137,6 +144,9 @@ func NewRouter(opts Options) http.Handler {
 			a.Get("/role-bindings", h.listRoleBindings)
 			a.Put("/role-bindings", h.putUserAccess)
 			a.Delete("/role-bindings/{id}", h.deleteRoleBinding)
+			a.Get("/audit-logs", h.listAuditLogs)
+			a.Get("/audit-logs/verify", h.verifyAuditChain)
+			a.Get("/audit-logs/export", h.exportAuditLogs)
 		})
 	})
 

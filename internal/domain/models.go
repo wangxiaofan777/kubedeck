@@ -85,28 +85,28 @@ type RoleBindingInput struct {
 
 // AuditEntry 是一条审计记录。写入时 ID 为空，查询时由仓储填充。
 type AuditEntry struct {
-	ID           int64
-	OccurredAt   time.Time
-	RequestID    string
-	ActorID      *int64
-	ActorSubject string
-	ActorEmail   string
-	ClusterID    *int64
-	ClusterName  string
-	Verb         string
-	APIGroup     string
-	Resource     string
-	Namespace    string
-	ObjectName   string
-	Result       string
-	ResultCode   int
-	LatencyMS    int
-	ClientIP     string
-	UserAgent    string
-	BodyHash     string
-	Detail       map[string]any
-	PrevHash     string
-	Hash         string
+	ID           int64          `json:"id"`
+	OccurredAt   time.Time      `json:"occurredAt"`
+	RequestID    string         `json:"requestId"`
+	ActorID      *int64         `json:"actorId,omitempty"`
+	ActorSubject string         `json:"actorSubject"`
+	ActorEmail   string         `json:"actorEmail,omitempty"`
+	ClusterID    *int64         `json:"clusterId,omitempty"`
+	ClusterName  string         `json:"clusterName,omitempty"`
+	Verb         string         `json:"verb"`
+	APIGroup     string         `json:"apiGroup,omitempty"`
+	Resource     string         `json:"resource,omitempty"`
+	Namespace    string         `json:"namespace,omitempty"`
+	ObjectName   string         `json:"objectName,omitempty"`
+	Result       string         `json:"result"`
+	ResultCode   int            `json:"resultCode"`
+	LatencyMS    int            `json:"latencyMs"`
+	ClientIP     string         `json:"clientIp,omitempty"`
+	UserAgent    string         `json:"userAgent,omitempty"`
+	BodyHash     string         `json:"bodyHash,omitempty"`
+	Detail       map[string]any `json:"detail,omitempty"`
+	PrevHash     string         `json:"prevHash,omitempty"`
+	Hash         string         `json:"hash"`
 }
 
 // AuditRecord 是写入后的审计记录标识。

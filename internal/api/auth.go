@@ -111,6 +111,7 @@ func (h *handlers) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.setSessionCookie(w, sess.ID, int(time.Until(time.Unix(sess.ExpiresAt, 0)).Seconds()))
+	h.auditAuthEvent(r, sess.Identity, "login", http.StatusFound)
 	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: "", Path: "/auth", MaxAge: -1, HttpOnly: true, Secure: h.cookieSecure, SameSite: http.SameSiteLaxMode})
 	if returnTo == "" {
 		returnTo = "/"
@@ -121,6 +122,9 @@ func (h *handlers) callback(w http.ResponseWriter, r *http.Request) {
 // logout 使当前会话立即失效。
 func (h *handlers) logout(w http.ResponseWriter, r *http.Request) {
 	if sid := sessionID(r); sid != "" && h.authSvc != nil {
+		if sess, ok := h.authSvc.Session(sid); ok && !strings.HasPrefix(r.URL.Path, "/api/") {
+			h.auditAuthEvent(r, sess.Identity, "logout", http.StatusNoContent)
+		}
 		h.authSvc.Logout(sid)
 	}
 	h.clearSessionCookie(w)
@@ -203,8 +207,40 @@ func (h *handlers) bootstrap(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		WriteError(r.Context(), w, FromPlatformError(err))
 	default:
+		h.auditAuthEvent(r, auth.Identity{
+			UserID: user.ID, Subject: user.Subject, Email: user.Email,
+			DisplayName: user.DisplayName, PlatformAdmin: user.IsPlatformAdmin,
+		}, "bootstrap", http.StatusCreated)
 		writeJSON(w, http.StatusCreated, user)
 	}
+}
+
+// auditAuthEvent 记录登录/登出/引导等身份事件。
+func (h *handlers) auditAuthEvent(r *http.Request, id auth.Identity, verb string, status int) {
+	if h.audit == nil {
+		return
+	}
+	entry := domain.AuditEntry{
+		OccurredAt:   time.Now().UTC(),
+		RequestID:    RequestIDFrom(r.Context()),
+		ActorSubject: id.Subject,
+		ActorEmail:   id.Email,
+		Verb:         verb,
+		Resource:     "sessions",
+		Result:       "success",
+		ResultCode:   status,
+		ClientIP:     clientIP(r),
+		UserAgent:    r.UserAgent(),
+		Detail:       map[string]any{},
+	}
+	if id.UserID > 0 {
+		uid := id.UserID
+		entry.ActorID = &uid
+	}
+	if verb == "bootstrap" {
+		entry.Resource = "users"
+	}
+	h.audit.Record(entry)
 }
 
 // requireIdentity 是 API 鉴权中间件。开发模式下首次请求自动建立本地会话。
@@ -223,6 +259,7 @@ func (h *handlers) requireIdentity(next http.Handler) http.Handler {
 			sess, err := h.authSvc.NewDevSession()
 			if err == nil {
 				h.setSessionCookie(w, sess.ID, int(time.Until(time.Unix(sess.ExpiresAt, 0)).Seconds()))
+				h.auditAuthEvent(r, sess.Identity, "login", http.StatusOK)
 				next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), sess.Identity)))
 				return
 			}

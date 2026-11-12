@@ -106,9 +106,11 @@ func (c *fakeCluster) Info(context.Context) kube.ClusterInfo {
 }
 func (c *fakeCluster) TransportFor(kube.UserRef) (kube.Transport, error) { return c.t, nil }
 func (c *fakeCluster) Discovery(context.Context) (kube.DiscoveryResult, error) {
-	return kube.DiscoveryResult{Resources: []kube.APIResource{{
-		Group: "apps", Version: "v1", Resource: "deployments", Kind: "Deployment", Namespaced: true,
-	}}}, nil
+	return kube.DiscoveryResult{Resources: []kube.APIResource{
+		{Group: "apps", Version: "v1", Resource: "deployments", Kind: "Deployment", Namespaced: true},
+		{Version: "v1", Resource: "secrets", Kind: "Secret", Namespaced: true},
+		{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true},
+	}}, nil
 }
 
 type fakeRegistry struct {

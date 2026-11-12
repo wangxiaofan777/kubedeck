@@ -1,127 +1,327 @@
-import { useMemo, useState } from 'react'
-import { Empty, Spin } from 'antd'
-import type { MenuProps } from 'antd'
-import type { ResourceItem } from '../../lib/api'
-import AppLayout from '../../app/AppLayout'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  Alert,
+  Button,
+  Empty,
+  Input,
+  Modal,
+  Result,
+  Select,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+  message,
+} from 'antd'
+import { DeleteOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import { api, ApiError, type ResourceItem } from '../../lib/api'
+import { useResourceRealtime } from '../../lib/useRealtime'
 import ErrorAlert from '../../components/ErrorAlert'
-import ResourceTable from '../../components/ResourceTable'
-import DetailDrawer from '../../components/DetailDrawer'
-import { useClusters } from '../clusters/useClusters'
-import { useNamespaces } from '../namespaces/useNamespaces'
+import ResourceTable, { itemKey } from '../../components/ResourceTable'
+import { useCan } from '../auth/useCan'
 import { useResourceList } from './useResourceList'
-import { RESOURCE_TYPES, type ResourceType } from './resourceTypes'
+import { isCrashLoop, resolveType, RESOURCE_TYPES } from './resourceTypes'
 
-function buildMenuItems(): MenuProps['items'] {
-  const groups = new Map<string, ResourceType[]>()
-  for (const item of RESOURCE_TYPES) {
-    const list = groups.get(item.group) ?? []
-    list.push(item)
-    groups.set(item.group, list)
-  }
-  return Array.from(groups, ([label, types]) => ({
-    key: label,
-    type: 'group' as const,
-    label,
-    children: types.map((t) => ({ key: t.key, label: t.label })),
-  }))
-}
+const PAGE_LIMIT = 500
 
-/** 资源浏览页：持有集群/命名空间/资源类型上下文，组合查询与视图。 */
 export default function ResourcesPage() {
-  const [clusterName, setClusterName] = useState<string>()
-  const [namespace, setNamespace] = useState('')
-  const [typeKey, setTypeKey] = useState('pods')
-  const [search, setSearch] = useState('')
-  const [selected, setSelected] = useState<ResourceItem>()
+  const { cluster, typeKey } = useParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
-  const clustersQuery = useClusters()
-  const clusters = useMemo(() => clustersQuery.data ?? [], [clustersQuery.data])
-  const cluster = useMemo(
-    () => clusters.find((c) => c.name === clusterName) ?? clusters[0],
-    [clusters, clusterName],
+  const type = resolveType(typeKey) ?? RESOURCE_TYPES[0]
+  const namespace = searchParams.get('namespace') ?? ''
+  const continueToken = searchParams.get('continue') ?? ''
+  const urlSearch = searchParams.get('search') ?? ''
+  const labelSelector = searchParams.get('label') ?? ''
+
+  const [search, setSearch] = useState(urlSearch)
+  const [labelInput, setLabelInput] = useState(labelSelector)
+  const [podFilter, setPodFilter] = useState<'all' | 'crashloop'>('all')
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([])
+  const [batchOpen, setBatchOpen] = useState(false)
+  const [batchRunning, setBatchRunning] = useState(false)
+
+  useEffect(() => setSearch(urlSearch), [urlSearch])
+  useEffect(() => setLabelInput(labelSelector), [labelSelector])
+  useEffect(() => {
+    setSelectedKeys([])
+    setPodFilter('all')
+  }, [cluster, type.key, namespace])
+
+  const listQuery = useResourceList(cluster, type, {
+    namespace,
+    continueToken,
+    labelSelector,
+    limit: PAGE_LIMIT,
+  })
+
+  const queryKey = useMemo(
+    () => [
+      'resources',
+      cluster,
+      type.key,
+      namespace,
+      labelSelector,
+      '',
+      continueToken,
+      PAGE_LIMIT,
+      '',
+      '',
+    ],
+    [cluster, type.key, namespace, labelSelector, continueToken],
   )
-  const type = RESOURCE_TYPES.find((t) => t.key === typeKey) ?? RESOURCE_TYPES[0]
 
-  const namespacesQuery = useNamespaces(cluster?.name)
-  const listQuery = useResourceList(cluster?.name, type, namespace)
+  useResourceRealtime({
+    cluster,
+    gvr: type.gvr,
+    namespace,
+    queryKey,
+    resourceVersion: listQuery.data?.resourceVersion,
+    enabled: !!cluster && !continueToken,
+  })
+
+  const deleteCan = useCan({
+    cluster,
+    gvr: type.gvr,
+    namespace,
+    verb: type.key === 'namespaces' ? 'delete' : 'deletecollection',
+    enabled: type.key !== 'namespaces',
+  })
 
   const items = useMemo(() => {
-    const all = listQuery.data?.items ?? []
+    let all = listQuery.data?.items ?? []
     const q = search.trim().toLowerCase()
-    return q ? all.filter((i) => i.metadata.name.toLowerCase().includes(q)) : all
-  }, [listQuery.data, search])
+    if (q) all = all.filter((item) => item.metadata.name.toLowerCase().includes(q))
+    if (type.key === 'pods' && podFilter === 'crashloop') all = all.filter(isCrashLoop)
+    return all
+  }, [listQuery.data, search, type.key, podFilter])
 
-  const menuItems = useMemo(buildMenuItems, [])
-
-  const selectCluster = (name: string) => {
-    setClusterName(name)
-    setNamespace('')
-    setSelected(undefined)
-  }
-  const selectNamespace = (value: string) => {
-    setNamespace(value)
-    setSelected(undefined)
-  }
-  const selectType = (key: string) => {
-    const next = RESOURCE_TYPES.find((t) => t.key === key)
-    setTypeKey(key)
-    setSearch('')
-    setSelected(undefined)
-    if (next && !next.namespaced) setNamespace('')
-  }
-  const refresh = () => {
-    void clustersQuery.refetch()
-    void namespacesQuery.refetch()
-    void listQuery.refetch()
+  const updateSearch = (next: Record<string, string | undefined>) => {
+    const params = new URLSearchParams(searchParams)
+    for (const [key, value] of Object.entries(next)) {
+      if (value) params.set(key, value)
+      else params.delete(key)
+    }
+    params.delete('continue')
+    setSearchParams(params, { replace: true })
   }
 
-  if (clustersQuery.isLoading) {
-    return (
-      <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh' }}>
-        <Spin size="large" />
-      </div>
+  const openDetail = (item: ResourceItem) => {
+    const ns = item.metadata.namespace ?? '_'
+    const suffix = item.metadata.namespace
+      ? `?namespace=${encodeURIComponent(item.metadata.namespace)}`
+      : ''
+    navigate(
+      `/clusters/${encodeURIComponent(cluster!)}/${type.key}/${encodeURIComponent(ns)}/${encodeURIComponent(item.metadata.name)}${suffix}`,
     )
   }
 
-  const error = clustersQuery.error ?? namespacesQuery.error ?? listQuery.error
+  const runBatchDelete = async () => {
+    if (!cluster) return
+    setBatchRunning(true)
+    try {
+      const result = await api.batchRemove({
+        cluster,
+        gvr: type.gvr,
+        namespace,
+        names: selectedKeys.map((key) => {
+          const item = listQuery.data?.items.find((i) => itemKey(i) === key)
+          return item?.metadata.name ?? key
+        }),
+        propagationPolicy: 'Background',
+      })
+      if (result.failed > 0) {
+        message.warning(`已完成 ${result.succeeded} 项，失败 ${result.failed} 项`)
+      } else {
+        message.success(`已删除 ${result.succeeded} 项`)
+      }
+      setSelectedKeys([])
+      setBatchOpen(false)
+      await queryClient.invalidateQueries({ queryKey })
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '批量删除失败')
+    } finally {
+      setBatchRunning(false)
+    }
+  }
+
+  if (listQuery.error instanceof ApiError && listQuery.error.code === 'FORBIDDEN') {
+    return (
+      <Result status="403" title="无访问权限" subTitle="当前账号无权访问该命名空间或资源类型。" />
+    )
+  }
+
+  const filterActive = !!(search || labelSelector || podFilter !== 'all')
+  const selectedItems = (listQuery.data?.items ?? []).filter((item) =>
+    selectedKeys.includes(itemKey(item)),
+  )
 
   return (
-    <>
-      <AppLayout
-        clusters={clusters}
-        cluster={cluster}
-        onSelectCluster={selectCluster}
-        namespaces={namespacesQuery.data?.namespaces ?? []}
-        namespace={namespace}
-        onSelectNamespace={selectNamespace}
-        namespaced={type.namespaced}
-        menuItems={menuItems}
-        typeKey={type.key}
-        onSelectType={selectType}
-        onRefresh={refresh}
+    <div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          marginBottom: 12,
+          flexWrap: 'wrap',
+        }}
       >
-        <ErrorAlert error={error} />
-        {!cluster ? (
-          <Empty description="未注册任何集群：请用 KUBEDECK_DEV_KUBECONFIG 指定 kubeconfig 启动" />
-        ) : (
+        <Space size={8}>
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            {type.label}
+          </Typography.Title>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {items.length} 项
+          </Typography.Text>
+          {namespace && <Tag>{namespace}</Tag>}
+        </Space>
+        <Space wrap>
+          <Input
+            allowClear
+            aria-label="按名称过滤"
+            placeholder="按名称过滤"
+            prefix={<SearchOutlined />}
+            value={search}
+            onChange={(event) => {
+              setSearch(event.target.value)
+              updateSearch({ search: event.target.value || undefined })
+            }}
+            style={{ width: 220 }}
+          />
+          <Input
+            allowClear
+            aria-label="标签选择器"
+            placeholder="labelSelector，如 app=web"
+            value={labelInput}
+            onChange={(event) => setLabelInput(event.target.value)}
+            onPressEnter={() => updateSearch({ label: labelInput || undefined })}
+            style={{ width: 220 }}
+          />
+          {type.key === 'pods' && (
+            <Select
+              aria-label="状态过滤"
+              value={podFilter}
+              onChange={setPodFilter}
+              style={{ width: 150 }}
+              options={[
+                { value: 'all', label: '全部状态' },
+                { value: 'crashloop', label: 'CrashLoopBackOff' },
+              ]}
+            />
+          )}
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={() => {
+              void listQuery.refetch()
+            }}
+          >
+            刷新
+          </Button>
+          {selectedKeys.length > 0 && (deleteCan.loading || deleteCan.allowed) && (
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              disabled={deleteCan.loading}
+              onClick={() => setBatchOpen(true)}
+            >
+              删除所选（{selectedKeys.length}）
+            </Button>
+          )}
+        </Space>
+      </div>
+
+      <ErrorAlert error={listQuery.error} />
+
+      {listQuery.isLoading ? (
+        <div style={{ padding: 64, textAlign: 'center' }}>
+          <Spin />
+        </div>
+      ) : items.length === 0 ? (
+        <Empty
+          description={filterActive ? '没有匹配的资源' : '该视图暂无资源'}
+          style={{ padding: 48 }}
+        >
+          {filterActive && (
+            <Button
+              onClick={() => {
+                setSearch('')
+                setPodFilter('all')
+                setLabelInput('')
+                const params = new URLSearchParams(searchParams)
+                params.delete('search')
+                params.delete('label')
+                params.delete('continue')
+                setSearchParams(params, { replace: true })
+              }}
+            >
+              清除筛选
+            </Button>
+          )}
+        </Empty>
+      ) : (
+        <>
           <ResourceTable
             type={type}
             items={items}
-            loading={listQuery.isLoading}
-            search={search}
-            onSearch={setSearch}
-            onSelect={setSelected}
+            loading={listQuery.isFetching}
             namespace={namespace}
+            selectedKeys={selectedKeys}
+            onSelectionChange={setSelectedKeys}
+            onSelect={openDetail}
           />
-        )}
-      </AppLayout>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              gap: 8,
+              marginTop: 12,
+            }}
+          >
+            {continueToken && (
+              <Button onClick={() => updateSearch({ continue: undefined })}>回到第一页</Button>
+            )}
+            {listQuery.data?.continue && (
+              <Button
+                type="primary"
+                onClick={() => updateSearch({ continue: listQuery.data?.continue })}
+              >
+                下一页
+              </Button>
+            )}
+          </div>
+        </>
+      )}
 
-      <DetailDrawer
-        cluster={cluster?.name}
-        type={type}
-        item={selected}
-        onClose={() => setSelected(undefined)}
-      />
-    </>
+      <Modal
+        open={batchOpen}
+        title={`删除 ${selectedItems.length} 个 ${type.label}`}
+        okText="确认删除"
+        okButtonProps={{ danger: true, loading: batchRunning }}
+        onOk={() => void runBatchDelete()}
+        onCancel={() => setBatchOpen(false)}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="删除后无法撤销，请确认以下对象"
+        />
+        <ul style={{ maxHeight: 240, overflow: 'auto', paddingLeft: 20 }}>
+          {selectedItems.map((item) => (
+            <li key={itemKey(item)}>
+              {item.metadata.namespace ? `${item.metadata.namespace}/` : ''}
+              {item.metadata.name}
+            </li>
+          ))}
+        </ul>
+      </Modal>
+    </div>
   )
 }

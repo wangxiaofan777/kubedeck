@@ -14,9 +14,10 @@ import (
 
 // listResponse 是资源列表响应。
 type listResponse struct {
-	Items     []map[string]any `json:"items"`
-	Continue  string           `json:"continue,omitempty"`
-	Remaining *int64           `json:"remainingItemCount,omitempty"`
+	Items           []map[string]any `json:"items"`
+	Continue        string           `json:"continue,omitempty"`
+	Remaining       *int64           `json:"remainingItemCount,omitempty"`
+	ResourceVersion string           `json:"resourceVersion,omitempty"`
 }
 
 // apiResources 返回资源目录；部分 API 组不可用时仍返回其余资源。
@@ -72,9 +73,10 @@ func (h *handlers) listResources(w http.ResponseWriter, r *http.Request) {
 	sortItems(items, r.URL.Query().Get("sortBy"), r.URL.Query().Get("order"))
 
 	writeJSON(w, http.StatusOK, listResponse{
-		Items:     items,
-		Continue:  list.GetContinue(),
-		Remaining: list.GetRemainingItemCount(),
+		Items:           items,
+		Continue:        list.GetContinue(),
+		Remaining:       list.GetRemainingItemCount(),
+		ResourceVersion: list.GetResourceVersion(),
 	})
 }
 

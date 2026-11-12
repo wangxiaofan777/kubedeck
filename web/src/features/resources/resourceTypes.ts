@@ -3,6 +3,7 @@ import type { GVR, ResourceItem } from '../../lib/api'
 export interface ResourceType {
   key: string
   label: string
+  kind: string
   group: '工作负载' | '网络' | '配置' | '集群'
   /** core 组用空串，API 层会转换为路径中的 "_"。 */
   gvr: GVR
@@ -13,6 +14,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'pods',
     label: 'Pods',
+    kind: 'Pod',
     group: '工作负载',
     gvr: { group: '', version: 'v1', resource: 'pods' },
     namespaced: true,
@@ -20,6 +22,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'deployments',
     label: 'Deployments',
+    kind: 'Deployment',
     group: '工作负载',
     gvr: { group: 'apps', version: 'v1', resource: 'deployments' },
     namespaced: true,
@@ -27,6 +30,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'statefulsets',
     label: 'StatefulSets',
+    kind: 'StatefulSet',
     group: '工作负载',
     gvr: { group: 'apps', version: 'v1', resource: 'statefulsets' },
     namespaced: true,
@@ -34,6 +38,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'daemonsets',
     label: 'DaemonSets',
+    kind: 'DaemonSet',
     group: '工作负载',
     gvr: { group: 'apps', version: 'v1', resource: 'daemonsets' },
     namespaced: true,
@@ -41,6 +46,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'jobs',
     label: 'Jobs',
+    kind: 'Job',
     group: '工作负载',
     gvr: { group: 'batch', version: 'v1', resource: 'jobs' },
     namespaced: true,
@@ -48,6 +54,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'cronjobs',
     label: 'CronJobs',
+    kind: 'CronJob',
     group: '工作负载',
     gvr: { group: 'batch', version: 'v1', resource: 'cronjobs' },
     namespaced: true,
@@ -55,6 +62,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'services',
     label: 'Services',
+    kind: 'Service',
     group: '网络',
     gvr: { group: '', version: 'v1', resource: 'services' },
     namespaced: true,
@@ -62,6 +70,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'ingresses',
     label: 'Ingresses',
+    kind: 'Ingress',
     group: '网络',
     gvr: { group: 'networking.k8s.io', version: 'v1', resource: 'ingresses' },
     namespaced: true,
@@ -69,6 +78,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'configmaps',
     label: 'ConfigMaps',
+    kind: 'ConfigMap',
     group: '配置',
     gvr: { group: '', version: 'v1', resource: 'configmaps' },
     namespaced: true,
@@ -76,6 +86,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'secrets',
     label: 'Secrets',
+    kind: 'Secret',
     group: '配置',
     gvr: { group: '', version: 'v1', resource: 'secrets' },
     namespaced: true,
@@ -83,6 +94,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'nodes',
     label: 'Nodes',
+    kind: 'Node',
     group: '集群',
     gvr: { group: '', version: 'v1', resource: 'nodes' },
     namespaced: false,
@@ -90,6 +102,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'namespaces',
     label: 'Namespaces',
+    kind: 'Namespace',
     group: '集群',
     gvr: { group: '', version: 'v1', resource: 'namespaces' },
     namespaced: false,
@@ -97,6 +110,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
   {
     key: 'events',
     label: 'Events',
+    kind: 'Event',
     group: '集群',
     gvr: { group: '', version: 'v1', resource: 'events' },
     namespaced: true,
@@ -149,4 +163,41 @@ export function statusOf(item: ResourceItem, type: ResourceType): string {
     default:
       return '-'
   }
+}
+
+export function resolveType(key: string | undefined): ResourceType | undefined {
+  return RESOURCE_TYPES.find((t) => t.key === key)
+}
+
+export function isWorkload(type: ResourceType): boolean {
+  return ['deployments', 'statefulsets', 'daemonsets', 'replicasets'].includes(type.key)
+}
+
+export function supportsScale(type: ResourceType): boolean {
+  return ['deployments', 'statefulsets', 'replicasets'].includes(type.key)
+}
+
+export function supportsRestart(type: ResourceType): boolean {
+  return ['deployments', 'statefulsets', 'daemonsets'].includes(type.key)
+}
+
+export function supportsRollback(type: ResourceType): boolean {
+  return type.key === 'deployments'
+}
+
+export function statusColor(status: string): string {
+  const lower = status.toLowerCase()
+  if (/(running|ready|active|succeeded|healthy|available)/.test(lower)) return 'green'
+  if (/(pending|progressing|containercreating|terminating|updating)/.test(lower)) return 'blue'
+  if (/(failed|error|crashloopbackoff|notready|unreachable|degraded|imagepullbackoff)/.test(lower))
+    return 'red'
+  return 'default'
+}
+
+export function isCrashLoop(item: ResourceItem): boolean {
+  const status = asRecord(item.status)
+  const containers = Array.isArray(status.containerStatuses)
+    ? (status.containerStatuses as { state?: { waiting?: { reason?: string } } }[])
+    : []
+  return containers.some((c) => c.state?.waiting?.reason === 'CrashLoopBackOff')
 }

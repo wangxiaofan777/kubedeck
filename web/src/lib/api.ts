@@ -14,7 +14,7 @@ export interface ObjectMeta {
   annotations?: Record<string, string>
   uid?: string
   resourceVersion?: string
-  ownerReferences?: { kind: string; name: string }[]
+  ownerReferences?: { kind: string; name: string; uid?: string }[]
 }
 
 export interface ResourceItem {
@@ -30,6 +30,7 @@ export interface ListResponse {
   items: ResourceItem[]
   continue?: string
   remainingItemCount?: number
+  resourceVersion?: string
 }
 
 /** GVR 是资源定位三元组；core 组用空串表示。 */
@@ -39,23 +40,157 @@ export interface GVR {
   resource: string
 }
 
+export interface RoleBinding {
+  id: number
+  userId: number
+  clusterId: number
+  clusterName: string
+  namespace: string
+  roleCode: string
+}
+
+export interface MeResponse {
+  user: {
+    userId: number
+    subject: string
+    email: string
+    displayName: string
+    isPlatformAdmin: boolean
+    dev?: boolean
+  }
+  mode: 'oidc' | 'dev'
+  clusters: string[]
+  bindings: RoleBinding[]
+}
+
+export interface APIResource {
+  group: string
+  version: string
+  resource: string
+  kind: string
+  namespaced: boolean
+  verbs: string[]
+}
+
+export interface DiscoveryResponse {
+  resources: APIResource[]
+  failedGroups?: string[]
+  fetchedAt: string
+}
+
+export interface AccessCheck {
+  cluster: string
+  namespace?: string
+  verb: string
+  group?: string
+  version?: string
+  resource: string
+  subresource?: string
+  name?: string
+}
+
+export interface AccessResult {
+  allowed: boolean
+  reason?: string
+}
+
+export interface ResourceDiff {
+  diff: string
+  immutableFields?: string[]
+  currentResourceVersion?: string
+  submittedResourceVersion?: string
+}
+
+export interface WorkloadOperation {
+  id: string
+  type: 'scale' | 'restart'
+  cluster: string
+  namespace: string
+  name: string
+  resource: string
+  targetReplicas: number
+  currentReplicas: number
+  readyReplicas: number
+  updatedReplicas: number
+  availableReplicas: number
+  startedAt: string
+  elapsedMs: number
+  concluded: boolean
+  success: boolean
+  message?: string
+}
+
+export interface Revision {
+  revision: number
+  name: string
+  images: string[]
+  replicas: number
+  readyReplicas: number
+  createdAt: string
+}
+
+export interface EventItem {
+  type: string
+  reason: string
+  message: string
+  count: number
+  lastTimestamp: string
+  firstTimestamp?: string
+  involvedObject?: { kind?: string; name?: string; namespace?: string }
+  source?: { component?: string }
+}
+
+export interface AuditEntry {
+  id: number
+  occurredAt: string
+  requestId: string
+  actorSubject: string
+  actorEmail?: string
+  clusterName?: string
+  verb: string
+  apiGroup?: string
+  resource?: string
+  namespace?: string
+  objectName?: string
+  result: string
+  resultCode: number
+  latencyMs: number
+  clientIp?: string
+  bodyHash?: string
+  detail?: Record<string, unknown>
+}
+
+export interface AuditListResponse {
+  items: AuditEntry[]
+  total: number
+  limit: number
+  offset: number
+  retentionWarning?: string
+}
+
 export class ApiError extends Error {
   readonly code: string
   readonly requestId?: string
   readonly status?: number
+  readonly details?: Record<string, unknown>
   /** 5xx 与 429 可重试；4xx 与网络错误不自动重试（网络错误由用户主动刷新）。 */
   readonly retryable: boolean
 
   constructor(
     code: string,
     message: string,
-    options: { requestId?: string; status?: number } = {},
+    options: {
+      requestId?: string
+      status?: number
+      details?: Record<string, unknown>
+    } = {},
   ) {
     super(message)
     this.name = 'ApiError'
     this.code = code
     this.requestId = options.requestId
     this.status = options.status
+    this.details = options.details
     this.retryable =
       options.status !== undefined && (options.status >= 500 || options.status === 429)
   }
@@ -65,15 +200,22 @@ async function toError(res: Response): Promise<ApiError> {
   let code = `HTTP_${res.status}`
   let message = res.statusText || '请求失败'
   let requestId: string | undefined
+  let details: Record<string, unknown> | undefined
   try {
-    const body = (await res.json()) as { code?: string; message?: string; requestId?: string }
+    const body = (await res.json()) as {
+      code?: string
+      message?: string
+      requestId?: string
+      details?: Record<string, unknown>
+    }
     code = body.code ?? code
     message = body.message ?? message
     requestId = body.requestId
+    details = body.details
   } catch {
     // 非 JSON 响应：保留 HTTP 状态与状态文本。
   }
-  return new ApiError(code, message, { requestId, status: res.status })
+  return new ApiError(code, message, { requestId, status: res.status, details })
 }
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
@@ -81,6 +223,7 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   try {
     res = await fetch(url, {
       ...init,
+      credentials: 'same-origin',
       headers: { Accept: 'application/json', ...init.headers },
     })
   } catch (err) {
@@ -89,11 +232,34 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (!res.ok) throw await toError(res)
+  if (res.status === 204) return undefined as T
   try {
     return (await res.json()) as T
   } catch {
-    throw new ApiError('INVALID_RESPONSE', '服务端返回了无法解析的响应', { status: res.status })
+    throw new ApiError('INVALID_RESPONSE', '服务端返回了无法解析的响应', {
+      status: res.status,
+    })
   }
+}
+
+async function requestText(
+  url: string,
+  init: RequestInit = {},
+  accept = 'text/yaml',
+): Promise<string> {
+  let res: Response
+  try {
+    res = await fetch(url, {
+      ...init,
+      credentials: 'same-origin',
+      headers: { Accept: accept, ...init.headers },
+    })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err
+    throw new ApiError('NETWORK_ERROR', '无法连接平台服务，请检查网络或后端是否启动')
+  }
+  if (!res.ok) throw await toError(res)
+  return res.text()
 }
 
 function clusterPath(cluster: string): string {
@@ -105,13 +271,52 @@ function resourcePath(cluster: string, gvr: GVR, name?: string): string {
   return name ? `${base}/${encodeURIComponent(name)}` : base
 }
 
+function query(params: Record<string, unknown>): string {
+  const q = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === '') continue
+    q.set(key, String(value))
+  }
+  const text = q.toString()
+  return text ? `?${text}` : ''
+}
+
 export const api = {
+  me(signal?: AbortSignal): Promise<MeResponse> {
+    return request<MeResponse>('/api/v1/auth/me', { signal })
+  },
+
+  loginURL(returnTo: string): string {
+    return `/auth/login?returnTo=${encodeURIComponent(returnTo)}`
+  },
+
+  logout(): Promise<void> {
+    return request<void>('/api/v1/auth/logout', { method: 'POST' })
+  },
+
+  can(checks: AccessCheck[], signal?: AbortSignal): Promise<{ results: AccessResult[] }> {
+    return request<{ results: AccessResult[] }>('/api/v1/auth/can', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checks }),
+      signal,
+    })
+  },
+
   clusters(signal?: AbortSignal): Promise<ClusterInfo[]> {
     return request<ClusterInfo[]>('/api/v1/clusters', { signal })
   },
 
+  clusterDetail(cluster: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return request<Record<string, unknown>>(`${clusterPath(cluster)}`, { signal })
+  },
+
   namespaces(cluster: string, signal?: AbortSignal): Promise<{ namespaces: string[] }> {
     return request<{ namespaces: string[] }>(`${clusterPath(cluster)}/namespaces`, { signal })
+  },
+
+  apiResources(cluster: string, signal?: AbortSignal): Promise<DiscoveryResponse> {
+    return request<DiscoveryResponse>(`${clusterPath(cluster)}/api-resources`, { signal })
   },
 
   list(params: {
@@ -119,40 +324,338 @@ export const api = {
     gvr: GVR
     namespace?: string
     limit?: number
+    continueToken?: string
+    labelSelector?: string
+    fieldSelector?: string
+    sortBy?: string
+    order?: string
     signal?: AbortSignal
   }): Promise<ListResponse> {
-    const q = new URLSearchParams({ limit: String(params.limit ?? 200) })
-    if (params.namespace) q.set('namespace', params.namespace)
-    return request<ListResponse>(`${resourcePath(params.cluster, params.gvr)}?${q.toString()}`, {
+    const qs = query({
+      limit: params.limit ?? 200,
+      continue: params.continueToken,
+      namespace: params.namespace,
+      labelSelector: params.labelSelector,
+      fieldSelector: params.fieldSelector,
+      sortBy: params.sortBy,
+      order: params.order,
+    })
+    return request<ListResponse>(`${resourcePath(params.cluster, params.gvr)}${qs}`, {
       signal: params.signal,
     })
   },
 
-  async yaml(params: {
+  detail(params: {
+    cluster: string
+    gvr: GVR
+    namespace?: string
+    name: string
+    signal?: AbortSignal
+  }): Promise<{
+    object: ResourceItem
+    ownerReferences?: ObjectMeta['ownerReferences']
+    events: EventItem[]
+    eventsError?: string
+  }> {
+    const qs = query({ namespace: params.namespace })
+    return request(`${resourcePath(params.cluster, params.gvr, params.name)}/detail${qs}`, {
+      signal: params.signal,
+    })
+  },
+
+  yaml(params: {
     cluster: string
     gvr: GVR
     namespace?: string
     name: string
     signal?: AbortSignal
   }): Promise<string> {
-    const q = new URLSearchParams({ format: 'yaml' })
-    if (params.namespace) q.set('namespace', params.namespace)
+    return requestText(
+      `${resourcePath(params.cluster, params.gvr, params.name)}${query({
+        namespace: params.namespace,
+        format: 'yaml',
+      })}`,
+      { signal: params.signal },
+    )
+  },
 
-    let res: Response
-    try {
-      res = await fetch(
-        `${resourcePath(params.cluster, params.gvr, params.name)}?${q.toString()}`,
-        {
-          headers: { Accept: 'text/yaml' },
-          signal: params.signal,
-        },
-      )
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') throw err
-      throw new ApiError('NETWORK_ERROR', '无法连接平台服务，请检查网络或后端是否启动')
-    }
+  diff(params: {
+    cluster: string
+    gvr: GVR
+    namespace?: string
+    name: string
+    yaml: string
+  }): Promise<ResourceDiff> {
+    return request<ResourceDiff>(
+      `${resourcePath(params.cluster, params.gvr, params.name)}/diff${query({
+        namespace: params.namespace,
+      })}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/yaml' },
+        body: params.yaml,
+      },
+    )
+  },
+
+  updateYAML(params: {
+    cluster: string
+    gvr: GVR
+    namespace?: string
+    name: string
+    yaml: string
+    dryRun?: boolean
+  }): Promise<ResourceItem> {
+    return request<ResourceItem>(
+      `${resourcePath(params.cluster, params.gvr, params.name)}${query({
+        namespace: params.namespace,
+        dryRun: params.dryRun ? 'All' : undefined,
+      })}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/yaml' },
+        body: params.yaml,
+      },
+    )
+  },
+
+  remove(params: {
+    cluster: string
+    gvr: GVR
+    namespace?: string
+    name: string
+    propagationPolicy?: string
+    dryRun?: boolean
+  }): Promise<void> {
+    return request<void>(
+      `${resourcePath(params.cluster, params.gvr, params.name)}${query({
+        namespace: params.namespace,
+        propagationPolicy: params.propagationPolicy,
+        dryRun: params.dryRun ? 'All' : undefined,
+      })}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  batchRemove(params: {
+    cluster: string
+    gvr: GVR
+    namespace?: string
+    names: string[]
+    propagationPolicy?: string
+    dryRun?: boolean
+  }): Promise<{
+    results: { name: string; success: boolean; code?: string; message?: string }[]
+    succeeded: number
+    failed: number
+  }> {
+    return request(
+      `${resourcePath(params.cluster, params.gvr)}${query({ namespace: params.namespace })}`,
+      {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          names: params.names,
+          propagationPolicy: params.propagationPolicy,
+          dryRun: params.dryRun,
+        }),
+      },
+    )
+  },
+
+  scale(params: {
+    cluster: string
+    gvr: GVR
+    namespace?: string
+    name: string
+    replicas: number
+  }): Promise<{ operationId: string; targetReplicas: number }> {
+    return request(
+      `${clusterPath(params.cluster)}/workloads/${params.gvr.group || '_'}/${params.gvr.version}/${params.gvr.resource}/${encodeURIComponent(params.name)}/scale${query({ namespace: params.namespace })}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ replicas: params.replicas }),
+      },
+    )
+  },
+
+  restart(params: {
+    cluster: string
+    gvr: GVR
+    namespace?: string
+    name: string
+  }): Promise<{ operationId: string; restartedAt: string; resourceVersion: string }> {
+    return request(
+      `${clusterPath(params.cluster)}/workloads/${params.gvr.group || '_'}/${params.gvr.version}/${params.gvr.resource}/${encodeURIComponent(params.name)}/restart${query({ namespace: params.namespace })}`,
+      { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() } },
+    )
+  },
+
+  history(params: {
+    cluster: string
+    gvr: GVR
+    namespace?: string
+    name: string
+  }): Promise<{ currentRevision: number; revisions: Revision[] }> {
+    return request(
+      `${clusterPath(params.cluster)}/workloads/${params.gvr.group || '_'}/${params.gvr.version}/${params.gvr.resource}/${encodeURIComponent(params.name)}/history${query({ namespace: params.namespace })}`,
+    )
+  },
+
+  rollbackDiff(params: {
+    cluster: string
+    gvr: GVR
+    namespace?: string
+    name: string
+    revision: number
+  }): Promise<{ revision: number; diff: string; images: string[] }> {
+    return request(
+      `${clusterPath(params.cluster)}/workloads/${params.gvr.group || '_'}/${params.gvr.version}/${params.gvr.resource}/${encodeURIComponent(params.name)}/rollback/diff${query({ namespace: params.namespace, revision: params.revision })}`,
+    )
+  },
+
+  rollback(params: {
+    cluster: string
+    gvr: GVR
+    namespace?: string
+    name: string
+    revision: number
+  }): Promise<{ rolledBackTo: number; currentRevision: number }> {
+    return request(
+      `${clusterPath(params.cluster)}/workloads/${params.gvr.group || '_'}/${params.gvr.version}/${params.gvr.resource}/${encodeURIComponent(params.name)}/rollback${query({ namespace: params.namespace })}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revision: params.revision }),
+      },
+    )
+  },
+
+  pause(params: { cluster: string; gvr: GVR; namespace?: string; name: string }): Promise<void> {
+    return request(
+      `${clusterPath(params.cluster)}/workloads/${params.gvr.group || '_'}/${params.gvr.version}/${params.gvr.resource}/${encodeURIComponent(params.name)}/pause${query({ namespace: params.namespace })}`,
+      { method: 'POST' },
+    )
+  },
+
+  resume(params: { cluster: string; gvr: GVR; namespace?: string; name: string }): Promise<void> {
+    return request(
+      `${clusterPath(params.cluster)}/workloads/${params.gvr.group || '_'}/${params.gvr.version}/${params.gvr.resource}/${encodeURIComponent(params.name)}/resume${query({ namespace: params.namespace })}`,
+      { method: 'POST' },
+    )
+  },
+
+  evict(params: { cluster: string; namespace: string; name: string }): Promise<void> {
+    return request(
+      `${clusterPath(params.cluster)}/pods/${encodeURIComponent(params.namespace)}/${encodeURIComponent(params.name)}/evict`,
+      { method: 'POST' },
+    )
+  },
+
+  operation(cluster: string, id: string, signal?: AbortSignal): Promise<WorkloadOperation> {
+    return request<WorkloadOperation>(
+      `${clusterPath(cluster)}/operations/${encodeURIComponent(id)}`,
+      { signal },
+    )
+  },
+
+  events(
+    cluster: string,
+    params: {
+      namespace?: string
+      kind?: string
+      name?: string
+      type?: string
+      sinceSeconds?: number
+      signal?: AbortSignal
+    } = {},
+  ): Promise<{ items: EventItem[]; staleWarning?: string }> {
+    return request(
+      `${clusterPath(cluster)}/events${query({
+        namespace: params.namespace,
+        kind: params.kind,
+        name: params.name,
+        type: params.type,
+        sinceSeconds: params.sinceSeconds,
+      })}`,
+      { signal: params.signal },
+    )
+  },
+
+  logURL(params: {
+    cluster: string
+    namespace: string
+    name: string
+    container?: string
+    tailLines?: number
+    previous?: boolean
+    follow?: boolean
+    sinceTime?: string
+    timestamps?: boolean
+  }): string {
+    return `${clusterPath(params.cluster)}/pods/${encodeURIComponent(params.namespace)}/${encodeURIComponent(params.name)}/log${query(
+      {
+        container: params.container,
+        tailLines: params.tailLines,
+        previous: params.previous ? 'true' : undefined,
+        follow: params.follow ? 'true' : undefined,
+        sinceTime: params.sinceTime,
+        timestamps: params.timestamps === false ? 'false' : undefined,
+      },
+    )}`
+  },
+
+  async logStream(url: string, signal?: AbortSignal): Promise<Response> {
+    const res = await fetch(url, {
+      credentials: 'same-origin',
+      signal,
+      headers: { Accept: 'text/plain' },
+    })
     if (!res.ok) throw await toError(res)
-    return res.text()
+    return res
+  },
+
+  auditLogs(
+    params: {
+      from?: string
+      to?: string
+      actor?: string
+      cluster?: string
+      resource?: string
+      result?: string
+      limit?: number
+      offset?: number
+      signal?: AbortSignal
+    } = {},
+  ): Promise<AuditListResponse> {
+    const { signal, ...filters } = params
+    return request<AuditListResponse>(`/api/v1/admin/audit-logs${query(filters)}`, {
+      signal,
+    })
+  },
+
+  verifyAudit(): Promise<{
+    checked: number
+    intact: boolean
+    brokenId?: number
+    brokenKind?: string
+  }> {
+    return request('/api/v1/admin/audit-logs/verify')
+  },
+
+  auditExportURL(
+    format: 'csv' | 'json',
+    filters: {
+      from?: string
+      to?: string
+      actor?: string
+      cluster?: string
+      resource?: string
+      result?: string
+    } = {},
+  ): string {
+    return `/api/v1/admin/audit-logs/export${query({ ...filters, format })}`
   },
 }
 

@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App as AntApp, ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import { ApiError } from '../lib/api'
+import AuthProvider from './AuthProvider'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,7 +23,9 @@ export default function AppProviders({ children }: { children: ReactNode }) {
   return (
     <ConfigProvider locale={zhCN}>
       <AntApp>
-        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>{children}</AuthProvider>
+        </QueryClientProvider>
       </AntApp>
     </ConfigProvider>
   )

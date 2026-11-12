@@ -1,0 +1,14 @@
+.git
+.gitignore
+.testenv
+.zcode
+.idea
+.vscode
+bin
+node_modules
+web/node_modules
+web/dist
+openspec
+docs
+verify
+*.md

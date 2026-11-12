@@ -1,0 +1,22 @@
+# 本地测试环境（含集群凭据，绝不提交）
+.testenv/*
+!.testenv/README.md
+
+# Go 构建产物
+/verify/verify
+/verify/verify.exe
+*.test
+coverage.out
+/bin/
+/dist/
+
+# 前端
+node_modules/
+web/dist/*
+!web/dist/.gitkeep
+
+# 编辑器与系统文件
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

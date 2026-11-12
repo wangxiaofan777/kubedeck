@@ -3,6 +3,7 @@ package kube
 
 import (
 	"context"
+	"io"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -76,6 +77,19 @@ type Transport interface {
 	Scale(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, replicas int32) (*unstructured.Unstructured, error)
 	// Evict 通过 policy/v1 Eviction 驱逐 Pod，受 PDB 约束。
 	Evict(ctx context.Context, namespace, name string, gracePeriodSeconds *int64) error
+	// Logs 读取或跟随 Pod 容器日志。调用方负责关闭返回的 reader。
+	Logs(ctx context.Context, namespace, name string, opts LogOptions) (io.ReadCloser, error)
+}
+
+// LogOptions 是 Pod 日志读取参数。
+type LogOptions struct {
+	Container    string
+	TailLines    *int64
+	SinceSeconds *int64
+	SinceTime    string
+	Previous     bool
+	Follow       bool
+	Timestamps   bool
 }
 
 // ClusterAccess 是注册表持有的集群入口：既能给出与用户无关的健康信息，

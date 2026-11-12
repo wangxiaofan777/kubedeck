@@ -2,6 +2,8 @@ package kube
 
 import (
 	"context"
+	"io"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -43,6 +45,10 @@ func (f *fakeTransport) Scale(context.Context, schema.GroupVersionResource, stri
 }
 func (f *fakeTransport) Evict(context.Context, string, string, *int64) error {
 	return nil
+}
+
+func (f *fakeTransport) Logs(context.Context, string, string, LogOptions) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 func TestRegistryAddGetOrder(t *testing.T) {

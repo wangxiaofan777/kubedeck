@@ -25,7 +25,7 @@ func (h *handlers) apiResources(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cluster, ok := h.accessibleCluster(w, r, id, r.URL.Query().Get("namespace"))
+	cluster, ok := h.accessibleCluster(w, r, id)
 	if !ok {
 		return
 	}

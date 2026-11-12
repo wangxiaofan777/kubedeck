@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,6 +26,7 @@ type fakeTransport struct {
 	err         error
 	deleteErrs  map[string]error
 	updateCalls int
+	logBody     string
 }
 
 func (f *fakeTransport) Name() string { return f.name }
@@ -73,6 +75,14 @@ func (f *fakeTransport) Scale(context.Context, schema.GroupVersionResource, stri
 }
 func (f *fakeTransport) Evict(context.Context, string, string, *int64) error {
 	return f.err
+}
+
+func (f *fakeTransport) Logs(context.Context, string, string, kube.LogOptions) (io.ReadCloser, error) {
+	body := f.logBody
+	if body == "" {
+		body = "log line\n"
+	}
+	return io.NopCloser(strings.NewReader(body)), nil
 }
 
 type fakeCluster struct{ t *fakeTransport }

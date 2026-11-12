@@ -112,6 +112,8 @@ func NewRouter(opts Options) http.Handler {
 			c.Post("/workloads/{group}/{version}/{resource}/{name}/pause", h.pauseWorkload)
 			c.Post("/workloads/{group}/{version}/{resource}/{name}/resume", h.resumeWorkload)
 			c.Post("/pods/{namespace}/{name}/evict", h.evictPod)
+			c.Get("/pods/{namespace}/{name}/log", h.podLog)
+			c.Get("/events", h.listEvents)
 			c.Get("/operations/{id}", h.getOperation)
 			c.With(h.requireAdmin).Patch("/", h.patchCluster)
 			c.With(h.requireAdmin).Delete("/", h.deleteCluster)

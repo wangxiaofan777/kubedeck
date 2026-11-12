@@ -239,6 +239,7 @@ type DirectTransport struct {
 	discovery discovery.DiscoveryInterface
 	authz     authzv1.AuthorizationV1Interface
 	rest      rest.Interface
+	logRest   rest.Interface
 }
 
 func newDirectTransport(name, server string, cfg *rest.Config) (*DirectTransport, error) {
@@ -254,6 +255,12 @@ func newDirectTransport(name, server string, cfg *rest.Config) (*DirectTransport
 	if err != nil {
 		return nil, fmt.Errorf("build authorization client: %w", err)
 	}
+	logCfg := rest.CopyConfig(cfg)
+	logCfg.Timeout = 0 // 日志跟随是长连接，由请求 context 控制生命周期
+	logRest, err := discovery.NewDiscoveryClientForConfig(logCfg)
+	if err != nil {
+		return nil, fmt.Errorf("build log client: %w", err)
+	}
 	return &DirectTransport{
 		name:      name,
 		server:    server,
@@ -261,6 +268,7 @@ func newDirectTransport(name, server string, cfg *rest.Config) (*DirectTransport
 		discovery: disc,
 		authz:     authz,
 		rest:      disc.RESTClient(),
+		logRest:   logRest.RESTClient(),
 	}, nil
 }
 

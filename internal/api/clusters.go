@@ -21,13 +21,21 @@ func (h *handlers) transport(w http.ResponseWriter, r *http.Request) (kube.Trans
 		WriteError(r.Context(), w, NewError(CodeUnauthenticated, "登录状态无效或已过期"))
 		return nil, nil, false
 	}
-	t, cluster, err := h.transportFor(r.Context(), id, chi.URLParam(r, "cluster"), r.URL.Query().Get("namespace"))
+	t, cluster, err := h.transportFor(r.Context(), id, chi.URLParam(r, "cluster"), requestNamespace(r))
 	if err != nil {
 		status, message := transportError(err)
 		WriteError(r.Context(), w, NewError(status, message))
 		return nil, nil, false
 	}
 	return t, cluster, true
+}
+
+// requestNamespace 优先使用查询参数，其次使用路径参数（Pod 日志/驱逐等路由）。
+func requestNamespace(r *http.Request) string {
+	if ns := r.URL.Query().Get("namespace"); ns != "" {
+		return ns
+	}
+	return chi.URLParam(r, "namespace")
 }
 
 // transportFor 是可复用的集群访问入口（操作进度查询等场景使用）。

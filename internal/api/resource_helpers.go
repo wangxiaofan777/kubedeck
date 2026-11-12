@@ -22,8 +22,9 @@ func identityFromRequest(w http.ResponseWriter, r *http.Request) (auth.Identity,
 }
 
 // accessibleCluster 执行平台准入并返回集群入口。
-func (h *handlers) accessibleCluster(w http.ResponseWriter, r *http.Request, id auth.Identity, namespace string) (kube.ClusterAccess, bool) {
+func (h *handlers) accessibleCluster(w http.ResponseWriter, r *http.Request, id auth.Identity) (kube.ClusterAccess, bool) {
 	name := chi.URLParam(r, "cluster")
+	namespace := requestNamespace(r)
 	allowed, err := h.clusterAccess(r.Context(), id, name, namespace)
 	if err != nil {
 		WriteError(r.Context(), w, FromPlatformError(err))

@@ -8,6 +8,7 @@ import LoginPage from './features/auth/LoginPage'
 import ResourcesPage from './features/resources/ResourcesPage'
 import ResourceDetailPage from './features/resources/ResourceDetailPage'
 import AuditPage from './features/audit/AuditPage'
+import OverviewPage from './features/overview/OverviewPage'
 
 function RequireAuth() {
   const { loading, error } = useAuth()
@@ -56,7 +57,7 @@ function HomeRedirect() {
   if (clusters.isError && !clusters.data) return <ClusterListError />
   const first = clusters.data?.[0]
   if (!first) return <Navigate to="/no-cluster" replace />
-  return <Navigate to={`/clusters/${encodeURIComponent(first.name)}/pods`} replace />
+  return <Navigate to={`/clusters/${encodeURIComponent(first.name)}/overview`} replace />
 }
 
 function NoCluster() {
@@ -85,6 +86,7 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route element={<ConsoleShell />}>
           <Route index element={<HomeRedirect />} />
+          <Route path="/clusters/:cluster/overview" element={<OverviewPage />} />
           <Route path="/clusters/:cluster/:typeKey" element={<ResourcesPage />} />
           <Route
             path="/clusters/:cluster/:typeKey/:namespace/:name"

@@ -215,7 +215,7 @@ func buildAuth(ctx context.Context, cfg config.Config, st *store.Store, logger *
 			KubeUser:      cfg.DevUser, // 为空时不 Impersonation，直接用 kubeconfig 身份
 			Email:         subject,
 			DisplayName:   "Local Developer",
-			PlatformAdmin: true,
+			PlatformAdmin: cfg.DevPlatformAdmin,
 			Dev:           true,
 		}
 		if st != nil {

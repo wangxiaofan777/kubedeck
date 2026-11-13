@@ -75,7 +75,10 @@ func TestWriterRetriesAfterFailure(t *testing.T) {
 	go w.Run(ctx)
 
 	w.Record(domain.AuditEntry{Verb: "scale"})
-	time.Sleep(30 * time.Millisecond)
+	deadline := time.Now().Add(time.Second)
+	for !w.Degraded() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if !w.Degraded() {
 		t.Fatal("writer should be degraded after failed write")
 	}
@@ -83,7 +86,7 @@ func TestWriterRetriesAfterFailure(t *testing.T) {
 	store.mu.Lock()
 	store.fail = false
 	store.mu.Unlock()
-	deadline := time.Now().Add(time.Second)
+	deadline = time.Now().Add(time.Second)
 	for store.count() < 1 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}

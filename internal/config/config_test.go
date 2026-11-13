@@ -136,3 +136,39 @@ func TestLoadRejectsInvalidKeyVersionEnv(t *testing.T) {
 		t.Fatal("expected error for non-numeric key version")
 	}
 }
+
+func TestDevPlatformAdminDefaultsToTrue(t *testing.T) {
+	t.Setenv("KUBEDECK_CONFIG", "")
+	t.Setenv("KUBEDECK_DEV_KUBECONFIG", "/tmp/kubeconfig")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.DevPlatformAdmin {
+		t.Fatal("DevPlatformAdmin should default to true")
+	}
+}
+
+func TestLoadAppliesDevPlatformAdmin(t *testing.T) {
+	t.Setenv("KUBEDECK_CONFIG", "")
+	t.Setenv("KUBEDECK_DEV_KUBECONFIG", "/tmp/kubeconfig")
+	t.Setenv("KUBEDECK_DEV_PLATFORM_ADMIN", "FALSE")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DevPlatformAdmin {
+		t.Fatal("DevPlatformAdmin should be false")
+	}
+}
+
+func TestLoadRejectsInvalidDevPlatformAdmin(t *testing.T) {
+	t.Setenv("KUBEDECK_CONFIG", "")
+	t.Setenv("KUBEDECK_DEV_PLATFORM_ADMIN", "yes")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for invalid dev platform admin value")
+	}
+}

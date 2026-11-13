@@ -110,6 +110,7 @@ func NewRouter(opts Options) http.Handler {
 		api.Route("/clusters/{cluster}", func(c chi.Router) {
 			c.Get("/", h.getCluster)
 			c.Get("/health", h.getClusterHealth)
+			c.Get("/overview", h.clusterOverview)
 			c.Get("/api-resources", h.apiResources)
 			c.Get("/namespaces", h.listNamespaces)
 			c.Get("/resources/{group}/{version}/{resource}", h.listResources)

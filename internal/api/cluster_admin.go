@@ -73,7 +73,7 @@ func (h *handlers) getCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "cluster")
-	if allowed, err := h.clusterAccess(r.Context(), id, name, "*"); err != nil {
+	if allowed, err := h.clusterVisible(r.Context(), id, name); err != nil {
 		WriteError(r.Context(), w, FromPlatformError(err))
 		return
 	} else if !allowed {
@@ -163,7 +163,7 @@ func (h *handlers) getClusterHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "cluster")
-	if allowed, err := h.clusterAccess(r.Context(), id, name, "*"); err != nil {
+	if allowed, err := h.clusterVisible(r.Context(), id, name); err != nil {
 		WriteError(r.Context(), w, FromPlatformError(err))
 		return
 	} else if !allowed {

@@ -21,17 +21,17 @@ func identityFromRequest(w http.ResponseWriter, r *http.Request) (auth.Identity,
 	return id, ok
 }
 
-// accessibleCluster 执行平台准入并返回集群入口。
-func (h *handlers) accessibleCluster(w http.ResponseWriter, r *http.Request, id auth.Identity) (kube.ClusterAccess, bool) {
+// visibleCluster 执行"集群可见"准入并返回集群入口，用于资源发现等集群级只读信息；
+// 只要用户在该集群上有绑定即可访问，不要求覆盖具体命名空间。
+func (h *handlers) visibleCluster(w http.ResponseWriter, r *http.Request, id auth.Identity) (kube.ClusterAccess, bool) {
 	name := chi.URLParam(r, "cluster")
-	namespace := requestNamespace(r)
-	allowed, err := h.clusterAccess(r.Context(), id, name, namespace)
+	allowed, err := h.clusterVisible(r.Context(), id, name)
 	if err != nil {
 		WriteError(r.Context(), w, FromPlatformError(err))
 		return nil, false
 	}
 	if !allowed {
-		WriteError(r.Context(), w, NewError(CodeForbidden, "无权访问该集群或命名空间"))
+		WriteError(r.Context(), w, NewError(CodeForbidden, "无权访问该集群"))
 		return nil, false
 	}
 	cluster, ok := h.cluster(name)

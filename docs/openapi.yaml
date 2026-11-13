@@ -230,6 +230,74 @@ paths:
       summary: 最近一次健康探测
       responses:
         "200": { description: health }
+  /api/v1/clusters/{cluster}/overview:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+    get:
+      tags: [clusters]
+      summary: 集群总览（节点、容量、Pod 状态、异常工作负载、最近事件）
+      responses:
+        "200":
+          description: overview
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cluster: { type: string }
+                  fetchedAt: { type: string, format: date-time }
+                  scope:
+                    type: object
+                    properties:
+                      allNamespaces: { type: boolean }
+                      namespaces: { type: integer }
+                      truncated: { type: boolean }
+                  nodes:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                      ready: { type: integer }
+                      allocatable:
+                        type: object
+                        properties:
+                          cpuMilli: { type: integer, format: int64 }
+                          memoryBytes: { type: integer, format: int64 }
+                  namespaces:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                  pods:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                      running: { type: integer }
+                      pending: { type: integer }
+                      succeeded: { type: integer }
+                      failed: { type: integer }
+                      unknown: { type: integer }
+                      crashLoop: { type: integer }
+                  workloads:
+                    type: object
+                    properties:
+                      deployments: { $ref: "#/components/schemas/WorkloadCount" }
+                      statefulSets: { $ref: "#/components/schemas/WorkloadCount" }
+                      daemonSets: { $ref: "#/components/schemas/WorkloadCount" }
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type: { type: string }
+                        reason: { type: string }
+                        namespace: { type: string }
+                        object: { type: string }
+                        message: { type: string }
+                        lastTimestamp: { type: string, format: date-time }
+                  unavailable:
+                    type: array
+                    items: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /api/v1/clusters/{cluster}/credential:
     parameters:
       - $ref: "#/components/parameters/Cluster"
@@ -795,6 +863,11 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
   schemas:
+    WorkloadCount:
+      type: object
+      properties:
+        total: { type: integer }
+        unavailable: { type: integer }
     Error:
       type: object
       required: [code, message, requestId]

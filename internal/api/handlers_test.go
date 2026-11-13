@@ -15,21 +15,26 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 
 	"github.com/kubedeck/kubedeck/internal/auth"
+	"github.com/kubedeck/kubedeck/internal/cluster"
 	"github.com/kubedeck/kubedeck/internal/domain"
 	"github.com/kubedeck/kubedeck/internal/kube"
 )
 
 type fakeTransport struct {
-	name        string
-	namespaces  []string
-	list        *unstructured.UnstructuredList
-	object      *unstructured.Unstructured
-	err         error
-	deleteErrs  map[string]error
-	updateCalls int
-	logBody     string
-	watcher     watch.Interface
-	watchErr    error
+	name           string
+	namespaces     []string
+	namespaceCalls int
+	list           *unstructured.UnstructuredList
+	lists          map[string]*unstructured.UnstructuredList
+	listErrs       map[string]error
+	listFn         func(schema.GroupVersionResource, string) (*unstructured.UnstructuredList, error)
+	object         *unstructured.Unstructured
+	err            error
+	deleteErrs     map[string]error
+	updateCalls    int
+	logBody        string
+	watcher        watch.Interface
+	watchErr       error
 }
 
 func (f *fakeTransport) Name() string { return f.name }
@@ -37,14 +42,31 @@ func (f *fakeTransport) Info(context.Context) kube.ClusterInfo {
 	return kube.ClusterInfo{Name: f.name, Version: "v1.37.2", Status: kube.StatusHealthy}
 }
 func (f *fakeTransport) Namespaces(context.Context) ([]string, error) {
+	f.namespaceCalls++
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.namespaces, nil
 }
-func (f *fakeTransport) List(context.Context, schema.GroupVersionResource, string, kube.ListOptions) (*unstructured.UnstructuredList, error) {
+func (f *fakeTransport) List(_ context.Context, gvr schema.GroupVersionResource, namespace string, _ kube.ListOptions) (*unstructured.UnstructuredList, error) {
+	if f.listFn != nil {
+		return f.listFn(gvr, namespace)
+	}
+	if f.listErrs != nil {
+		if err, ok := f.listErrs[gvr.Resource]; ok {
+			return nil, err
+		}
+	}
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.lists != nil {
+		if list, ok := f.lists[gvr.Resource]; ok {
+			return list, nil
+		}
+	}
+	if f.list == nil {
+		return &unstructured.UnstructuredList{}, nil
 	}
 	return f.list, nil
 }
@@ -98,11 +120,18 @@ func (f *fakeTransport) Watch(context.Context, schema.GroupVersionResource, stri
 	return watch.NewFake(), nil
 }
 
-type fakeCluster struct{ t *fakeTransport }
+type fakeCluster struct {
+	t      *fakeTransport
+	status string
+}
 
 func (c *fakeCluster) Name() string { return c.t.name }
 func (c *fakeCluster) Info(context.Context) kube.ClusterInfo {
-	return kube.ClusterInfo{Name: c.t.name, Version: "v1.37.2", Status: kube.StatusHealthy}
+	status := c.status
+	if status == "" {
+		status = kube.StatusHealthy
+	}
+	return kube.ClusterInfo{Name: c.t.name, Version: "v1.37.2", Status: status}
 }
 func (c *fakeCluster) TransportFor(kube.UserRef) (kube.Transport, error) { return c.t, nil }
 func (c *fakeCluster) Discovery(context.Context) (kube.DiscoveryResult, error) {
@@ -163,8 +192,14 @@ type fakeAuthStore struct {
 	bindings []domain.RoleBinding
 }
 
-func (f fakeAuthStore) BindingsForUser(context.Context, int64) ([]domain.RoleBinding, error) {
-	return f.bindings, nil
+func (f fakeAuthStore) BindingsForUser(_ context.Context, userID int64) ([]domain.RoleBinding, error) {
+	out := make([]domain.RoleBinding, 0, len(f.bindings))
+	for _, b := range f.bindings {
+		if b.UserID == userID {
+			out = append(out, b)
+		}
+	}
+	return out, nil
 }
 func (f fakeAuthStore) ClustersForUser(context.Context, int64) ([]domain.Cluster, error) {
 	return nil, nil
@@ -173,6 +208,29 @@ func (f fakeAuthStore) ClustersForUser(context.Context, int64) ([]domain.Cluster
 type fakePinger struct{ err error }
 
 func (f fakePinger) Ping(context.Context) error { return f.err }
+
+type fakeClusterAdmin struct {
+	info kube.ClusterInfo
+	has  bool
+	cred domain.Credential
+}
+
+func (f fakeClusterAdmin) Create(context.Context, cluster.CreateRequest) (domain.Cluster, error) {
+	return domain.Cluster{}, nil
+}
+func (f fakeClusterAdmin) Rotate(context.Context, string, kube.IngestInput) (domain.Cluster, error) {
+	return domain.Cluster{}, nil
+}
+func (f fakeClusterAdmin) UpdateMeta(context.Context, string, string, map[string]string) (domain.Cluster, error) {
+	return domain.Cluster{}, nil
+}
+func (f fakeClusterAdmin) Delete(context.Context, string) error { return nil }
+func (f fakeClusterAdmin) CredentialMeta(context.Context, string) (domain.Credential, error) {
+	return f.cred, nil
+}
+func (f fakeClusterAdmin) Info(context.Context, string) (kube.ClusterInfo, bool) {
+	return f.info, f.has
+}
 
 func testDeployment() *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
@@ -555,5 +613,169 @@ func TestRollbackUnavailableRevision(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestClusterVisible(t *testing.T) {
+	h := &handlers{authStore: fakeAuthStore{bindings: []domain.RoleBinding{
+		{UserID: 7, ClusterName: "prod", Namespace: "default", RoleCode: "developer"},
+		{UserID: 9, ClusterName: "staging", Namespace: "default", RoleCode: "viewer"},
+	}}}
+	cases := []struct {
+		name string
+		id   auth.Identity
+		want bool
+	}{
+		{"管理员", auth.Identity{UserID: 1, PlatformAdmin: true}, true},
+		{"有绑定", auth.Identity{UserID: 7}, true},
+		{"无绑定", auth.Identity{UserID: 8}, false},
+		{"仅其他集群绑定", auth.Identity{UserID: 9}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := h.clusterVisible(context.Background(), tc.id, "prod")
+			if err != nil {
+				t.Fatalf("clusterVisible: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("clusterVisible = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func namespaceRouter(transport *fakeTransport, store fakeAuthStore, id auth.Identity, status string) http.Handler {
+	registry := &fakeRegistry{
+		items: map[string]kube.ClusterAccess{"prod": &fakeCluster{t: transport, status: status}},
+		order: []string{"prod"},
+	}
+	return NewRouter(Options{
+		Registry:  registry,
+		Auth:      fakeAuth{authenticated: true, identity: id},
+		AuthStore: store,
+	})
+}
+
+func TestListNamespacesForNamespaceScopedUser(t *testing.T) {
+	transport := &fakeTransport{name: "prod", namespaces: []string{"default", "kube-system"}}
+	store := fakeAuthStore{bindings: []domain.RoleBinding{
+		{UserID: 9, ClusterName: "prod", Namespace: "dev", RoleCode: "viewer"},
+		{UserID: 9, ClusterName: "prod", Namespace: "default", RoleCode: "developer"},
+		{UserID: 9, ClusterName: "prod", Namespace: "dev", RoleCode: "developer"},
+		{UserID: 9, ClusterName: "staging", Namespace: "leak", RoleCode: "viewer"},
+		{UserID: 10, ClusterName: "prod", Namespace: "other-user", RoleCode: "viewer"},
+	}}
+	router := namespaceRouter(transport, store, auth.Identity{UserID: 9, Subject: "dev"}, "")
+
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/clusters/prod/namespaces")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Namespaces []string `json:"namespaces"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := strings.Join(body.Namespaces, ","); got != "default,dev" {
+		t.Fatalf("namespaces = %q, want default,dev", got)
+	}
+	if transport.namespaceCalls != 0 {
+		t.Fatalf("upstream namespace calls = %d, want 0", transport.namespaceCalls)
+	}
+}
+
+func TestListNamespacesForAllNamespacesBinding(t *testing.T) {
+	transport := &fakeTransport{name: "prod", namespaces: []string{"default", "kube-system"}}
+	store := fakeAuthStore{bindings: []domain.RoleBinding{{
+		UserID: 9, ClusterName: "prod", Namespace: "*", RoleCode: "developer",
+	}}}
+	router := namespaceRouter(transport, store, auth.Identity{UserID: 9, Subject: "dev"}, "")
+
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/clusters/prod/namespaces")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Namespaces []string `json:"namespaces"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := strings.Join(body.Namespaces, ","); got != "default,kube-system" {
+		t.Fatalf("namespaces = %q, want upstream list", got)
+	}
+	if transport.namespaceCalls != 1 {
+		t.Fatalf("upstream namespace calls = %d, want 1", transport.namespaceCalls)
+	}
+}
+
+func TestListNamespacesForUnreachableCluster(t *testing.T) {
+	transport := &fakeTransport{name: "prod"}
+	store := fakeAuthStore{bindings: []domain.RoleBinding{{
+		UserID: 9, ClusterName: "prod", Namespace: "*", RoleCode: "viewer",
+	}}}
+	router := namespaceRouter(transport, store, auth.Identity{UserID: 9, Subject: "viewer"}, kube.StatusUnreachable)
+
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/clusters/prod/namespaces")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body Error
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Code != CodeClusterUnreachable {
+		t.Fatalf("code = %s, want CLUSTER_UNREACHABLE", body.Code)
+	}
+	if transport.namespaceCalls != 0 {
+		t.Fatalf("upstream namespace calls = %d, want 0", transport.namespaceCalls)
+	}
+}
+
+func TestAPIResourcesForNamespaceScopedUser(t *testing.T) {
+	transport := &fakeTransport{name: "prod"}
+	store := fakeAuthStore{bindings: []domain.RoleBinding{{
+		UserID: 9, ClusterName: "prod", Namespace: "default", RoleCode: "viewer",
+	}}}
+	router := namespaceRouter(transport, store, auth.Identity{UserID: 9, Subject: "viewer"}, "")
+
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/clusters/prod/api-resources")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "deployments") {
+		t.Fatalf("discovery body missing deployments: %s", rec.Body.String())
+	}
+}
+
+func TestGetClusterForNamespaceScopedUserHidesCredential(t *testing.T) {
+	transport := &fakeTransport{name: "prod"}
+	store := fakeAuthStore{bindings: []domain.RoleBinding{{
+		UserID: 9, ClusterName: "prod", Namespace: "default", RoleCode: "viewer",
+	}}}
+	registry := &fakeRegistry{
+		items: map[string]kube.ClusterAccess{"prod": &fakeCluster{t: transport}},
+		order: []string{"prod"},
+	}
+	router := NewRouter(Options{
+		Registry:  registry,
+		Auth:      fakeAuth{authenticated: true, identity: auth.Identity{UserID: 9, Subject: "viewer"}},
+		AuthStore: store,
+		ClusterAdmin: fakeClusterAdmin{
+			info: kube.ClusterInfo{Name: "prod", Version: "v1.37.2", Status: kube.StatusHealthy},
+			has:  true,
+			cred: domain.Credential{AuthType: "kubeconfig", Fingerprint: "sha256:abc"},
+		},
+	})
+
+	for _, path := range []string{"/api/v1/clusters/prod", "/api/v1/clusters/prod/health"} {
+		rec := doRequest(t, router, http.MethodGet, path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, body = %s", path, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "credential") {
+			t.Fatalf("%s leaked credential to non-admin: %s", path, rec.Body.String())
+		}
 	}
 }

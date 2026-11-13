@@ -6,6 +6,66 @@ export interface ClusterInfo {
   message?: string
 }
 
+/** 总览统计范围：allNamespaces=false 表示只覆盖逐个读取成功的命名空间。 */
+export interface OverviewScope {
+  allNamespaces: boolean
+  namespaces: number
+  truncated: boolean
+}
+
+export interface OverviewAllocatable {
+  cpuMilli: number
+  memoryBytes: number
+}
+
+export interface OverviewNodes {
+  total: number
+  ready: number
+  allocatable: OverviewAllocatable
+}
+
+export interface OverviewPods {
+  total: number
+  running: number
+  pending: number
+  succeeded: number
+  failed: number
+  unknown: number
+  crashLoop: number
+}
+
+export interface WorkloadCount {
+  total: number
+  unavailable: number
+}
+
+export interface OverviewWorkloads {
+  deployments: WorkloadCount
+  statefulSets: WorkloadCount
+  daemonSets: WorkloadCount
+}
+
+export interface OverviewEvent {
+  type: string
+  reason: string
+  namespace?: string
+  object: string
+  message: string
+  lastTimestamp: string
+}
+
+export interface ClusterOverview {
+  cluster: string
+  fetchedAt: string
+  scope: OverviewScope
+  nodes: OverviewNodes
+  namespaces: { total: number }
+  pods: OverviewPods
+  workloads: OverviewWorkloads
+  events: OverviewEvent[]
+  unavailable: string[]
+}
+
 export interface ObjectMeta {
   name: string
   namespace?: string
@@ -305,6 +365,10 @@ export const api = {
 
   clusters(signal?: AbortSignal): Promise<ClusterInfo[]> {
     return request<ClusterInfo[]>('/api/v1/clusters', { signal })
+  },
+
+  overview(cluster: string, signal?: AbortSignal): Promise<ClusterOverview> {
+    return request<ClusterOverview>(`${clusterPath(cluster)}/overview`, { signal })
   },
 
   clusterDetail(cluster: string, signal?: AbortSignal): Promise<Record<string, unknown>> {

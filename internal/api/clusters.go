@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/go-chi/chi/v5"
 
@@ -127,39 +128,83 @@ func (h *handlers) listNamespaces(w http.ResponseWriter, r *http.Request) {
 		WriteError(r.Context(), w, NewError(CodeUnauthenticated, "登录状态无效或已过期"))
 		return
 	}
-	t, cluster, ok := h.transport(w, r)
+	name := chi.URLParam(r, "cluster")
+	allowed, err := h.clusterVisible(r.Context(), id, name)
+	if err != nil {
+		WriteError(r.Context(), w, FromPlatformError(err))
+		return
+	}
+	if !allowed {
+		WriteError(r.Context(), w, NewError(CodeForbidden, "无权访问该集群或命名空间"))
+		return
+	}
+	cluster, ok := h.cluster(name)
 	if !ok {
+		WriteError(r.Context(), w, NewError(CodeNotFound, "集群不存在"))
 		return
 	}
 
+	// 只绑定具体命名空间时，直接返回绑定范围：不需要集群级权限，也不访问 apiserver。
 	if !id.PlatformAdmin {
 		bindings, err := h.bindingsFor(r.Context(), id)
 		if err != nil {
 			WriteError(r.Context(), w, FromPlatformError(err))
 			return
 		}
-		names := make([]string, 0)
+		names := make([]string, 0, len(bindings))
 		all := false
 		for _, b := range bindings {
-			if b.ClusterName != cluster.Name() {
+			if b.ClusterName != name {
 				continue
 			}
 			if b.Namespace == "*" {
 				all = true
 				break
 			}
-			names = append(names, b.Namespace)
+			if b.Namespace != "" {
+				names = append(names, b.Namespace)
+			}
 		}
 		if !all {
-			writeJSON(w, http.StatusOK, map[string]any{"namespaces": names})
+			writeJSON(w, http.StatusOK, map[string]any{"namespaces": uniqueSorted(names)})
 			return
 		}
 	}
 
+	// 管理员与 "*" 绑定需要枚举集群内命名空间；必须按用户身份访问。
+	if info := cluster.Info(r.Context()); info.Status == kube.StatusUnreachable {
+		status, message := transportError(errClusterUnreachable)
+		WriteError(r.Context(), w, NewError(status, message))
+		return
+	}
+	t, err := cluster.TransportFor(id.UserRef())
+	if err != nil {
+		status, message := transportError(err)
+		WriteError(r.Context(), w, NewError(status, message))
+		return
+	}
 	names, err := t.Namespaces(r.Context())
 	if err != nil {
 		WriteError(r.Context(), w, FromUpstream(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"namespaces": names})
+}
+
+// uniqueSorted 去除空值与重复项并按字典序排序，保证绑定列表稳定可比较。
+func uniqueSorted(names []string) []string {
+	seen := make(map[string]struct{}, len(names))
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	slices.Sort(out)
+	return out
 }

@@ -215,6 +215,25 @@ func (h *handlers) clusterAccess(ctx context.Context, id auth.Identity, cluster,
 	return bindingAllows(bindings, cluster, namespace, false), nil
 }
 
+// clusterVisible 判断用户是否可访问某集群的集群级只读信息（发现、健康等）：
+// 管理员，或在该集群上存在任意一条绑定。它与 clusterAccess 的区别是不要求
+// 绑定覆盖具体命名空间；跨命名空间的资源请求仍必须走 clusterAccess。
+func (h *handlers) clusterVisible(ctx context.Context, id auth.Identity, cluster string) (bool, error) {
+	if id.PlatformAdmin {
+		return true, nil
+	}
+	bindings, err := h.bindingsFor(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	for _, b := range bindings {
+		if b.ClusterName == cluster {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (h *handlers) cluster(name string) (kube.ClusterAccess, bool) {
 	if h.registry == nil {
 		return nil, false

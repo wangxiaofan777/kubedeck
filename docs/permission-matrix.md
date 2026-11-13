@@ -18,6 +18,13 @@ KubeDeck 有两层权限，二者都必须满足：
 
 平台角色是“可见范围”的门槛，不会自动授予 Kubernetes 权限。PlatformAdmin 如果自己的 K8s 身份没有权限，仍然只能看到 403。
 
+### 命名空间可见性
+
+- 只绑定具体命名空间的用户：`GET /clusters/{c}/namespaces` 直接返回绑定范围内的命名空间（去重排序），不要求集群级权限，也不会泄露范围外的名称。
+- `*` 绑定或平台管理员：以用户身份向目标集群列举命名空间，只返回 apiserver 允许其查看的名称；该身份在目标集群需要 `namespaces` 的 `list` 权限。
+- `GET /clusters/{c}/api-resources`、集群详情与健康信息只要求目标集群上存在任一绑定。
+- 开发模式（`KUBEDECK_DEV_KUBECONFIG`）固定以 PlatformAdmin 运行，无法演示命名空间隔离；验证隔离需使用 OIDC 普通账号。
+
 ## 2. 操作 × Kubernetes 权限
 
 下表是控制台操作需要的最小 Kubernetes RBAC。`<resource>` 指目标资源；自定义资源同理。
@@ -25,6 +32,7 @@ KubeDeck 有两层权限，二者都必须满足：
 | 操作 | API | Kubernetes 权限 |
 |---|---|---|
 | 资源发现 | `GET /api-resources` | `get` on discovery（通常所有认证用户可用） |
+| 命名空间列表 | `GET /namespaces` | 平台绑定即返回绑定范围；`*` 绑定需要 `list` `namespaces` |
 | 列表 | `GET /resources/...` | `list` `<resource>`（命名空间内） |
 | 详情 | `GET /resources/.../{name}` | `get` `<resource>` |
 | YAML 读取 | `GET /resources/.../{name}` | `get` `<resource>` |

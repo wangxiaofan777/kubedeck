@@ -1,3 +1,4 @@
+import { useEffect, useMemo } from 'react'
 import {
   Navigate,
   Outlet,
@@ -23,6 +24,7 @@ import {
 import {
   AuditOutlined,
   ClusterOutlined,
+  DashboardOutlined,
   LogoutOutlined,
   ReloadOutlined,
   UserOutlined,
@@ -33,13 +35,16 @@ import { useClusters } from '../features/clusters/useClusters'
 import { useNamespaces } from '../features/namespaces/useNamespaces'
 import GlobalSearch from '../features/search/GlobalSearch'
 import { RESOURCE_TYPES, resolveType, type ResourceType } from '../features/resources/resourceTypes'
+import { ApiError } from '../lib/api'
 
 const { Header, Sider, Content } = Layout
 const { Title, Text } = Typography
 
-function buildMenuItems(): MenuProps['items'] {
+function buildMenuItems(clusterWide: boolean): MenuProps['items'] {
   const groups = new Map<string, ResourceType[]>()
   for (const item of RESOURCE_TYPES) {
+    // 集群级资源（Namespaces、Nodes）需要 * 绑定，否则请求必然 403。
+    if (!clusterWide && !item.namespaced) continue
     const list = groups.get(item.group) ?? []
     list.push(item)
     groups.set(item.group, list)
@@ -51,8 +56,6 @@ function buildMenuItems(): MenuProps['items'] {
     children: types.map((t) => ({ key: t.key, label: t.label })),
   }))
 }
-
-const MENU_ITEMS = buildMenuItems()
 
 /** ConsoleShell 负责登录校验、上下文导航与全局状态提示。 */
 export default function ConsoleShell() {
@@ -69,6 +72,61 @@ export default function ConsoleShell() {
   const namespace = searchParams.get('namespace') ?? ''
   const namespacesQuery = useNamespaces(cluster?.name)
   const isAuditPage = location.pathname.endsWith('/audit')
+  const isOverviewPage = location.pathname.endsWith('/overview')
+
+  // 平台绑定的 "*" 或管理员才具备跨命名空间范围；否则只能访问具体命名空间。
+  const clusterWide = useMemo(
+    () =>
+      !!me?.user.isPlatformAdmin ||
+      (me?.bindings ?? []).some(
+        (binding) => binding.clusterName === cluster?.name && binding.namespace === '*',
+      ),
+    [me, cluster?.name],
+  )
+  const availableNamespaces = namespacesQuery.data?.namespaces ?? []
+
+  // 命名空间级用户首次进入时先选中第一个可访问命名空间，避免发出必然 403 的跨命名空间请求。
+  useEffect(() => {
+    if (!me || !cluster || !type.namespaced || namespace || clusterWide || isAuditPage || isOverviewPage)
+      return
+    const first = namespacesQuery.data?.namespaces?.[0]
+    if (!first) return
+    const next = new URLSearchParams(searchParams)
+    next.set('namespace', first)
+    next.delete('continue')
+    navigate({ pathname: location.pathname, search: next.toString() }, { replace: true })
+  }, [
+    me,
+    cluster,
+    type.namespaced,
+    namespace,
+    clusterWide,
+    isAuditPage,
+    isOverviewPage,
+    namespacesQuery.data,
+    searchParams,
+    navigate,
+    location.pathname,
+  ])
+
+  const menuItems: MenuProps['items'] = useMemo(
+    () => [
+      { key: 'overview', icon: <DashboardOutlined />, label: '总览' },
+      { type: 'divider' as const },
+      ...(buildMenuItems(clusterWide) ?? []),
+      ...(me?.user.isPlatformAdmin
+        ? [
+            { type: 'divider' as const },
+            {
+              key: 'audit',
+              icon: <AuditOutlined />,
+              label: '审计日志',
+            },
+          ]
+        : []),
+    ],
+    [clusterWide, me?.user.isPlatformAdmin],
+  )
 
   if (loading) {
     return (
@@ -92,10 +150,14 @@ export default function ConsoleShell() {
   if (!me) return null
 
   if (!params.cluster && clusters.length > 0) {
-    return <Navigate to={`/clusters/${encodeURIComponent(clusters[0].name)}/pods`} replace />
+    return <Navigate to={`/clusters/${encodeURIComponent(clusters[0].name)}/overview`} replace />
   }
 
   const selectCluster = (name: string) => {
+    if (isOverviewPage) {
+      navigate(`/clusters/${encodeURIComponent(name)}/overview`)
+      return
+    }
     const nextNamespace = type.namespaced ? namespace : ''
     navigate(
       `/clusters/${encodeURIComponent(name)}/${type.key}${nextNamespace ? `?namespace=${encodeURIComponent(nextNamespace)}` : ''}`,
@@ -124,22 +186,12 @@ export default function ConsoleShell() {
     navigate({ pathname, search: next.toString() })
   }
 
-  const menuItems: MenuProps['items'] = [
-    ...(MENU_ITEMS ?? []),
-    ...(me.user.isPlatformAdmin
-      ? [
-          { type: 'divider' as const },
-          {
-            key: 'audit',
-            icon: <AuditOutlined />,
-            label: '审计日志',
-          },
-        ]
-      : []),
-  ]
-
   const onMenuClick: MenuProps['onClick'] = (event) => {
     if (!cluster) return
+    if (event.key === 'overview') {
+      navigate(`/clusters/${encodeURIComponent(cluster.name)}/overview`)
+      return
+    }
     if (event.key === 'audit') {
       navigate(`/clusters/${encodeURIComponent(cluster.name)}/audit`)
       return
@@ -221,22 +273,40 @@ export default function ConsoleShell() {
             <Select
               aria-label="命名空间"
               style={{ width: '100%', marginTop: 6 }}
-              value={namespace}
+              value={namespace || (clusterWide ? '' : undefined)}
+              placeholder="选择命名空间"
               onChange={selectNamespace}
-              disabled={!type.namespaced || !cluster || isAuditPage}
+              disabled={isOverviewPage || !type.namespaced || !cluster || isAuditPage}
               options={[
-                { value: '', label: '全部命名空间' },
-                ...(namespacesQuery.data?.namespaces ?? []).map((n) => ({
+                ...(clusterWide ? [{ value: '', label: '全部命名空间' }] : []),
+                ...availableNamespaces.map((n) => ({
                   value: n,
                   label: n,
                 })),
               ]}
             />
+            {namespacesQuery.isError && !isAuditPage && (
+              <div style={{ marginTop: 6 }}>
+                <Text type="danger" style={{ fontSize: 12 }}>
+                  {namespacesQuery.error instanceof ApiError &&
+                  namespacesQuery.error.code === 'FORBIDDEN'
+                    ? '无权查看命名空间列表'
+                    : '命名空间列表加载失败'}
+                </Text>
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={() => void namespacesQuery.refetch()}
+                >
+                  重试
+                </Button>
+              </div>
+            )}
           </div>
           <nav aria-label="资源类型">
             <Menu
               mode="inline"
-              selectedKeys={[isAuditPage ? 'audit' : type.key]}
+              selectedKeys={[isOverviewPage ? 'overview' : isAuditPage ? 'audit' : type.key]}
               items={menuItems}
               onClick={onMenuClick}
               style={{ borderInlineEnd: 0 }}
@@ -285,7 +355,7 @@ export default function ConsoleShell() {
                   <Button
                     size="small"
                     onClick={() =>
-                      navigate(`/clusters/${encodeURIComponent(clusters[0].name)}/pods`, {
+                      navigate(`/clusters/${encodeURIComponent(clusters[0].name)}/overview`, {
                         replace: true,
                       })
                     }

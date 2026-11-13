@@ -28,6 +28,9 @@ type Config struct {
 	DevClusterName string `yaml:"dev_cluster_name"`
 	// DevUser 非空时以该用户身份发起 Impersonation 请求（用于本地验证 RBAC）。
 	DevUser string `yaml:"dev_user"`
+	// DevPlatformAdmin 决定开发模式身份是否拥有平台管理员权限，默认 true。
+	// 设为 false 时按数据库中的角色绑定执行准入，用于本地验收按权限收敛的功能。
+	DevPlatformAdmin bool `yaml:"dev_platform_admin"`
 	// DatabaseURL 是平台元数据库连接串；为空时不连接数据库（仅 dev 模式可用）。
 	DatabaseURL string `yaml:"database_url"`
 	// MasterKey / MasterKeyVersion 是凭据加密的当前主密钥（base64 编码的 32 字节）。
@@ -59,6 +62,7 @@ func Default() Config {
 		Addr:               ":8080",
 		LogLevel:           "info",
 		DevClusterName:     "local",
+		DevPlatformAdmin:   true,
 		MasterKeyVersion:   1,
 		SessionTTLHours:    8,
 		MaxSessionsPerUser: 5,
@@ -104,6 +108,16 @@ func Load() (Config, error) {
 	}
 	if v := os.Getenv("KUBEDECK_DEV_USER"); v != "" {
 		cfg.DevUser = v
+	}
+	if v := os.Getenv("KUBEDECK_DEV_PLATFORM_ADMIN"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true":
+			cfg.DevPlatformAdmin = true
+		case "false":
+			cfg.DevPlatformAdmin = false
+		default:
+			return cfg, fmt.Errorf("KUBEDECK_DEV_PLATFORM_ADMIN must be true or false, got %q", v)
+		}
 	}
 	if v := os.Getenv("KUBEDECK_DATABASE_URL"); v != "" {
 		cfg.DatabaseURL = v

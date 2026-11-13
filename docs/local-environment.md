@@ -237,9 +237,10 @@ cd web && npm run dev   # http://localhost:5173
 | `KUBEDECK_DEV_KUBECONFIG` | 开发模式集群的 kubeconfig 路径（必填） |
 | `KUBEDECK_DEV_CLUSTER_NAME` | 集群展示名，默认 `local` |
 | `KUBEDECK_DEV_USER` | 可选；以该用户身份 Impersonation（默认用 kubeconfig 自身身份） |
+| `KUBEDECK_DEV_PLATFORM_ADMIN` | 可选；开发身份是否拥有平台管理员权限，默认 `true`，仅接受 `true`/`false` |
 | `KUBEDECK_ADDR` | 监听地址，默认 `:8080` |
 
-> dev 模式没有任何登录与权限校验，只能用于本地开发，不要暴露到网络。
+> dev 模式没有任何登录校验，只能用于本地开发，不要暴露到网络。设置 `KUBEDECK_DEV_PLATFORM_ADMIN=false` 后，平台准入改为按数据库中的角色绑定执行（通常配合 `KUBEDECK_DEV_USER` 使用），便于本地验收按权限收敛的功能；此时需要先启动数据库并写入对应用户的绑定。
 
 需要平台元数据表（集群登记、用户、审计）时，启动前先按 §7.3 加载数据库连接串。
 

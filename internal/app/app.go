@@ -76,7 +76,6 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		pinger = st
 	}
 
-	auditWriter := audit.NewWriter(st, logger)
 	opts := api.Options{
 		AllowedOrigins: cfg.AllowedOrigins,
 		Registry:       registry,
@@ -85,9 +84,13 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		ClusterAdmin:   clusterMgr,
 		BootstrapToken: cfg.BootstrapToken,
 		CookieSecure:   !cfg.CookieInsecure,
-		Audit:          auditWriter,
 	}
+	// 无数据库时不得把 typed-nil 的 *store.Store 传给审计 writer：
+	// 接口值非 nil 会让 Record 入队并在 flush 时解引用空指针。
+	var auditWorker *audit.Writer
 	if st != nil {
+		auditWorker = audit.NewWriter(st, logger)
+		opts.Audit = auditWorker
 		opts.AuthStore = st
 		opts.AdminStore = st
 		opts.AuditStore = st
@@ -117,9 +120,11 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	workers = append(workers, startWorker(runCtx, func(ctx context.Context) {
 		clusterHealth(ctx, clusterMgr, logger)
 	}))
-	workers = append(workers, startWorker(runCtx, func(ctx context.Context) {
-		auditWriter.Run(ctx)
-	}))
+	if auditWorker != nil {
+		workers = append(workers, startWorker(runCtx, func(ctx context.Context) {
+			auditWorker.Run(ctx)
+		}))
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

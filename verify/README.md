@@ -10,7 +10,7 @@
 
 | 组件 | 版本 / 位置 | 说明 |
 |---|---|---|
-| Go (Windows) | 1.27.4，`C:\Users\maosong.wang\tools\go` | 交叉验证用 |
+| Go (Windows) | 1.27.4，`C:\Users\<你>\tools\go` | 交叉验证用 |
 | Go (WSL) | 1.27.4，`/usr/local/go` | 实际编译运行位置 |
 | k3s | v1.37.2+k3s1（K8S 1.37） | WSL2 内，systemd 管理 |
 | kubectl | v1.36.1（Windows） | 通过 `127.0.0.1:6443` 访问 |

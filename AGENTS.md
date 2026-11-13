@@ -64,7 +64,7 @@ openspec validate add-kubedeck-mvp --strict
   ```
 - kubeconfig：`.testenv/k3s.yaml`（指向 `127.0.0.1:6443`）
 - **Windows 到 WSL 的 localhost 转发不稳定**，联调与测试命令尽量在 WSL 内执行
-- Go 路径：Windows `C:\Users\maosong.wang\tools\go`，WSL `/usr/local/go`
+- Go 路径：Windows `C:\Users\<你>\tools\go`，WSL `/usr/local/go`
 - 模块代理：`GOPROXY=https://goproxy.cn,direct`
 - 镜像加速已配置在 WSL 的 `/etc/rancher/k3s/registries.yaml`（docker.m.daocloud.io）
 - 环境搭建、验证命令与故障排查见 `docs/local-environment.md`（唯一权威来源）

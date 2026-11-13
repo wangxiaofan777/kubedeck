@@ -1,4 +1,4 @@
-import type { GVR, ResourceItem } from '../../lib/api'
+import type { APIResource, GVR, ResourceItem } from '../../lib/api'
 
 export interface ResourceType {
   key: string
@@ -185,6 +185,80 @@ export function createTemplate(type: ResourceType, namespace: string): string {
   const lines = [`apiVersion: ${apiVersion}`, `kind: ${type.kind}`, 'metadata:', '  name: ""']
   if (type.namespaced) lines.push(`  namespace: ${namespace}`)
   return `${lines.join('\n')}\n`
+}
+
+export interface ParsedApiVersion {
+  group: string
+  version: string
+}
+
+/** 解析 apiVersion：`v1` 归入核心组，`apps/v1` 拆成 group+version。 */
+export function parseApiVersion(apiVersion: string): ParsedApiVersion | undefined {
+  if (!apiVersion) return undefined
+  const parts = apiVersion.split('/')
+  if (parts.length === 1) return parts[0] ? { group: '', version: parts[0] } : undefined
+  if (parts.length === 2 && parts[0] && parts[1]) return { group: parts[0], version: parts[1] }
+  return undefined
+}
+
+/** CreateTarget 是创建弹窗根据 YAML 解析出的实际目标。 */
+export interface CreateTarget {
+  gvr: GVR
+  kind: string
+  namespaced: boolean
+  /** 控制台内置页面类型 key；未内置时为 undefined。 */
+  pageKey?: string
+}
+
+export type CreateTargetResolution =
+  | { ok: true; target: CreateTarget }
+  | { ok: false; reason: string }
+
+/** 资源发现中按 apiVersion + kind 找到可直接创建的目标。 */
+export function resolveCreateTarget(
+  resources: APIResource[],
+  apiVersion: string,
+  kind: string,
+): CreateTargetResolution {
+  const parsed = parseApiVersion(apiVersion)
+  if (!parsed) return { ok: false, reason: `apiVersion 格式不合法：${apiVersion}` }
+
+  const candidates = resources.filter((r) => r.kind === kind && r.group === parsed.group)
+  const match =
+    candidates.find((r) => r.version === parsed.version) ??
+    candidates.find((r) => r.verbs.includes('create')) ??
+    candidates[0]
+  if (!match) return { ok: false, reason: `集群中未发现 ${apiVersion} 的 ${kind}` }
+  if (!match.verbs.includes('create')) {
+    return { ok: false, reason: `资源类型 ${kind} 不支持创建` }
+  }
+
+  const page = RESOURCE_TYPES.find(
+    (t) =>
+      t.gvr.group === match.group &&
+      t.gvr.version === match.version &&
+      t.gvr.resource === match.resource,
+  )
+  return {
+    ok: true,
+    target: {
+      gvr: { group: match.group, version: match.version, resource: match.resource },
+      kind: match.kind,
+      namespaced: match.namespaced,
+      pageKey: page?.key,
+    },
+  }
+}
+
+/** YAML 声明的类型是否就是当前页面类型。 */
+export function matchesResourceType(apiVersion: string, kind: string, type: ResourceType): boolean {
+  const parsed = parseApiVersion(apiVersion)
+  if (!parsed) return false
+  return (
+    kind === type.kind &&
+    parsed.group === type.gvr.group &&
+    parsed.version === type.gvr.version
+  )
 }
 
 export function isWorkload(type: ResourceType): boolean {

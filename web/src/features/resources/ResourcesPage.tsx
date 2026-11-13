@@ -357,10 +357,21 @@ export default function ResourcesPage() {
           type={type}
           namespace={namespace}
           onCancel={() => setCreateOpen(false)}
-          onCreated={(item) => {
+          onCreated={(item, pageKey) => {
             setCreateOpen(false)
             void queryClient.invalidateQueries({ queryKey: ['resources'] })
-            openDetail(item)
+            if (!pageKey || pageKey === type.key) {
+              openDetail(item)
+              return
+            }
+            // YAML 创建了当前页面之外的类型：跳到该类型的内置页面。
+            const ns = item.metadata.namespace ?? '_'
+            const suffix = item.metadata.namespace
+              ? `?namespace=${encodeURIComponent(item.metadata.namespace)}`
+              : ''
+            navigate(
+              `/clusters/${encodeURIComponent(cluster!)}/${pageKey}/${encodeURIComponent(ns)}/${encodeURIComponent(item.metadata.name)}${suffix}`,
+            )
           }}
         />
       )}

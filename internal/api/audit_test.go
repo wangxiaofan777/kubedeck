@@ -43,6 +43,7 @@ type fakeAuditStore struct {
 	items     []domain.AuditEntry
 	status    store.ChainStatus
 	retention int
+	stats     store.AuditStats
 }
 
 func (f fakeAuditStore) QueryAudit(context.Context, store.AuditFilter) ([]domain.AuditEntry, error) {
@@ -56,6 +57,9 @@ func (f fakeAuditStore) VerifyAuditChain(context.Context) (store.ChainStatus, er
 }
 func (f fakeAuditStore) RetentionDays(context.Context) (int, error) {
 	return f.retention, nil
+}
+func (f fakeAuditStore) AuditStats(context.Context, store.AuditStatsFilter) (store.AuditStats, error) {
+	return f.stats, nil
 }
 
 func auditRouter(t *testing.T, writer *fakeAuditWriter, storeImpl AuditStore) http.Handler {

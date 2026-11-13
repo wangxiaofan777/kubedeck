@@ -228,6 +228,29 @@ export interface AuditListResponse {
   retentionWarning?: string
 }
 
+export interface AuditCount {
+  key: string
+  count: number
+}
+
+export interface AuditDayCount {
+  day: string
+  total: number
+  failed: number
+}
+
+export interface AuditStats {
+  from: string
+  to: string
+  total: number
+  success: number
+  failed: number
+  byDay: AuditDayCount[]
+  byVerb: AuditCount[]
+  byResource: AuditCount[]
+  byActor: AuditCount[]
+}
+
 export class ApiError extends Error {
   readonly code: string
   readonly requestId?: string
@@ -726,6 +749,16 @@ export const api = {
     brokenKind?: string
   }> {
     return request('/api/v1/admin/audit-logs/verify')
+  },
+
+  auditStats(params: {
+    cluster?: string
+    from?: string
+    to?: string
+    signal?: AbortSignal
+  } = {}): Promise<AuditStats> {
+    const { signal, ...filters } = params
+    return request<AuditStats>(`/api/v1/admin/audit-logs/stats${query(filters)}`, { signal })
   },
 
   auditExportURL(

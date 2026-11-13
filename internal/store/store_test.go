@@ -650,3 +650,59 @@ func TestCreateClusterWithCredentialAtomic(t *testing.T) {
 		t.Fatalf("updated = %+v err=%v", updated, err)
 	}
 }
+
+func TestAuditStats(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+
+	actor := mustUser(t, st, "alice")
+	cluster := mustCluster(t, st, "prod", &actor.ID)
+	base := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	fixtures := []domain.AuditEntry{
+		{RequestID: "stats-1", ActorID: &actor.ID, ActorSubject: actor.Subject, ClusterID: &cluster.ID,
+			ClusterName: cluster.Name, Verb: "create", Resource: "deployments", Result: "success"},
+		{RequestID: "stats-2", ActorID: &actor.ID, ActorSubject: actor.Subject, ClusterID: &cluster.ID,
+			ClusterName: cluster.Name, Verb: "patch", Resource: "deployments", Result: "failure"},
+		{RequestID: "stats-3", ActorID: &actor.ID, ActorSubject: actor.Subject, ClusterID: &cluster.ID,
+			ClusterName: cluster.Name, Verb: "create", Resource: "pods", Result: "success"},
+	}
+	offsets := []time.Duration{0, time.Hour, 26 * time.Hour}
+	for i := range fixtures {
+		fixtures[i].OccurredAt = base.Add(offsets[i])
+		if _, err := st.AppendAudit(ctx, fixtures[i]); err != nil {
+			t.Fatalf("AppendAudit %d: %v", i, err)
+		}
+	}
+
+	stats, err := st.AuditStats(ctx, AuditStatsFilter{
+		From: base.Add(-time.Minute), To: base.Add(72 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("AuditStats: %v", err)
+	}
+	if stats.Total != 3 || stats.Success != 2 || stats.Failed != 1 {
+		t.Fatalf("totals = %+v, want 3/2/1", stats)
+	}
+	if len(stats.ByDay) != 2 {
+		t.Fatalf("byDay = %+v, want 2 days", stats.ByDay)
+	}
+	if stats.ByVerb[0].Key != "create" || stats.ByVerb[0].Count != 2 {
+		t.Fatalf("byVerb = %+v, want create=2 first", stats.ByVerb)
+	}
+	if len(stats.ByResource) != 2 || stats.ByResource[0].Key != "deployments" {
+		t.Fatalf("byResource = %+v, want deployments first", stats.ByResource)
+	}
+	if len(stats.ByActor) != 1 || stats.ByActor[0].Count != 3 {
+		t.Fatalf("byActor = %+v", stats.ByActor)
+	}
+
+	empty, err := st.AuditStats(ctx, AuditStatsFilter{
+		From: base.Add(96 * time.Hour), To: base.Add(120 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("AuditStats empty: %v", err)
+	}
+	if empty.Total != 0 || len(empty.ByDay) != 0 || len(empty.ByVerb) != 0 {
+		t.Fatalf("empty stats = %+v", empty)
+	}
+}

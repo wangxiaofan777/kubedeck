@@ -23,6 +23,7 @@ type AuditStore interface {
 	CountAudit(ctx context.Context, filter store.AuditFilter) (int, error)
 	VerifyAuditChain(ctx context.Context) (store.ChainStatus, error)
 	RetentionDays(ctx context.Context) (int, error)
+	AuditStats(ctx context.Context, filter store.AuditStatsFilter) (store.AuditStats, error)
 }
 
 // listAuditLogs 按过滤条件分页返回审计记录。

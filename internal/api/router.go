@@ -150,6 +150,7 @@ func NewRouter(opts Options) http.Handler {
 			a.Put("/role-bindings", h.putUserAccess)
 			a.Delete("/role-bindings/{id}", h.deleteRoleBinding)
 			a.Get("/audit-logs", h.listAuditLogs)
+			a.Get("/audit-logs/stats", h.auditStats)
 			a.Get("/audit-logs/verify", h.verifyAuditChain)
 			a.Get("/audit-logs/export", h.exportAuditLogs)
 		})

@@ -32,7 +32,7 @@ systemd=true
 | kubectl | v1.36.1（或 k3s 自带） | Windows / WSL |
 | client-go | v0.37.2 | 由 `verify/go.mod` 锁定 |
 
-> **版本原则**：平台支持窗口为 K8S 1.34–1.37（client-go v0.37.2 对应上游 n-3 偏移），硬地板 1.24。接入时读取 `/version`，低于 1.34 拒绝接入（返回 400）。依据见 [design.md D12](../openspec/changes/add-kubedeck-mvp/design.md)。版本比较使用 `/version` 返回的 `major`/`minor` 字段，不要解析 `gitVersion`（k3s 的形如 `v1.37.2+k3s1`，带构建后缀）。
+> **版本原则**：平台支持窗口为 K8S 1.34–1.37（client-go v0.37.2 对应上游 n-3 偏移），硬地板 1.24。接入时读取 `/version`，低于 1.34 拒绝接入（返回 400）。依据见 [design.md D12](../openspec/changes/archive/2026-11-13-add-kubedeck-mvp/design.md)。版本比较使用 `/version` 返回的 `major`/`minor` 字段，不要解析 `gitVersion`（k3s 的形如 `v1.37.2+k3s1`，带构建后缀）。
 
 ## 3. 安装 k3s（WSL 内）
 

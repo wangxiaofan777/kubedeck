@@ -6,6 +6,7 @@
 |---|---|---|
 | [local-environment.md](local-environment.md) | WSL + k3s 环境搭建、数据库、镜像加速、常见问题、多版本矩阵 | 第一次搭环境、环境坏了、换机器 |
 | [deployment.md](deployment.md) | 生产部署、OIDC、外部 PostgreSQL、最小权限 SA、主密钥轮换 | 上线、换集群、配置 IdP |
+| [../deploy/compose/README.md](../deploy/compose/README.md) | Docker Compose 单机部署：应用 + PostgreSQL + Caddy | 没有 Kubernetes、单机/小团队部署 |
 | [operations.md](operations.md) | 升级、回滚、常见故障、容量与会话限制 | 值班、排障 |
 | [backup-restore.md](backup-restore.md) | 数据库备份、恢复、PITR 与演练 | 备份策略、灾难恢复 |
 | [permission-matrix.md](permission-matrix.md) | 平台角色 × 操作 × Kubernetes RBAC | 配权限、排查 403 |
@@ -30,6 +31,8 @@
 | `make check` | 提交前入口：后端 lint/测试 + 前端 lint/typecheck |
 | `make test-db` | 数据层集成测试（真实 PostgreSQL） |
 | `make db` | 初始化本地数据库角色与库 |
+| `make compose-up` | Docker Compose 单机构建并启动 |
+| `make compose-config` | 渲染并检查 Compose 配置 |
 
 更完整的说明见根 [README.md](../README.md) 与 [local-environment.md](local-environment.md)。
 
@@ -37,10 +40,10 @@
 
 1. `README.md` — 5 分钟了解这是什么
 2. `k8s-console-design.md` §1–§4 — 定位、选型、架构、核心模块
-3. `openspec/changes/add-kubedeck-mvp/proposal.md` — 本次变更的范围
-4. `openspec/changes/add-kubedeck-mvp/design.md` — 技术决策与权衡
-5. `openspec/changes/add-kubedeck-mvp/specs/` — 验收标准
-6. `openspec/changes/refactor-engineering-baseline/` — 工程基线的提案、设计与任务
+3. `openspec/changes/archive/2026-11-13-add-kubedeck-mvp/proposal.md` — 本次变更的范围
+4. `openspec/changes/archive/2026-11-13-add-kubedeck-mvp/design.md` — 技术决策与权衡
+5. `openspec/specs/` — 已归档的验收标准（按能力分目录）
+6. `openspec/changes/archive/2026-11-13-refactor-engineering-baseline/` — 工程基线的提案、设计与任务
 7. `docs/local-environment.md` — 动手前
 
 ## 文档维护约定

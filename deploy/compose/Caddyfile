@@ -1,0 +1,17 @@
+{$KUBEDECK_DOMAIN} {
+	encode zstd gzip
+
+	# flush_interval -1 让 WebSocket 与日志流立即刷新，避免反向代理缓冲。
+	reverse_proxy kubedeck:8080 {
+		flush_interval -1
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -16,10 +16,13 @@ RUN go mod download
 COPY . .
 COPY --from=web /src/internal/webui/dist ./internal/webui/dist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kubedeck ./cmd/server
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck
 
 # 3) 运行时：无发行版镜像，非 root
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/kubedeck /kubedeck
+COPY --from=build /out/healthcheck /healthcheck
 EXPOSE 8080
 USER nonroot:nonroot
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD ["/healthcheck"]
 ENTRYPOINT ["/kubedeck"]

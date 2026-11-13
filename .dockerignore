@@ -1,6 +1,9 @@
 .git
 .gitignore
 .testenv
+# Compose 本地配置可能含密钥，绝不进入构建上下文
+deploy/compose/.env
+deploy/compose/.env.local
 .zcode
 .idea
 .vscode

@@ -2,6 +2,10 @@
 .testenv/*
 !.testenv/README.md
 
+# Compose 本地配置（含密钥，绝不提交）
+deploy/compose/.env
+deploy/compose/.env.local
+
 # Go 构建产物
 /verify/verify
 /verify/verify.exe

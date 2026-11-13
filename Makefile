@@ -12,8 +12,9 @@ KEEP := $(DIST)/.gitkeep
 STATICCHECK ?= staticcheck
 # 显式包范围：避免扫描 web/node_modules（npm 依赖里可能带 Go 文件）。
 PKGS := ./cmd/... ./internal/...
+COMPOSE := docker compose -f deploy/compose/docker-compose.yml
 
-.PHONY: all build web server dev fmt lint test test-db db web-check check web-dev clean test-rules
+.PHONY: all build web server dev fmt lint test test-db db web-check check web-dev clean test-rules compose-up compose-down compose-config
 
 # 本地默认：先检查再构建。CI 使用各自独立的目标。
 all: check build
@@ -63,6 +64,16 @@ test-db: $(KEEP)
 # PrometheusRule 语法与告警触发单元测试（需要 python3 + PyYAML + promtool）。
 test-rules:
 	bash scripts/check-prometheus-rules.sh
+
+# Docker Compose 单机部署（需 deploy/compose/.env）。
+compose-config:
+	$(COMPOSE) config
+
+compose-up:
+	$(COMPOSE) up -d --build
+
+compose-down:
+	$(COMPOSE) down
 
 db:
 	bash scripts/dev-db.sh

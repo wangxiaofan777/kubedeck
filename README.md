@@ -17,9 +17,9 @@ MVP 功能已完成并通过本地 k3s 端到端验收（2026-11-12）：
 | 日志与实时 | 多容器日志、跟随/暂停/过滤；WebSocket 多路复用、续传/resync |
 | 审计 | 异步写入、哈希链校验、查询与 CSV/JSON 导出 |
 | 控制台 | 深链接、权限组件、虚拟滚动、全局搜索、空/错/降级态 |
-| 部署 | Helm Chart、最小权限 SA、Prometheus 指标与告警、运维/备份/发布文档 |
+| 部署 | Helm Chart、Docker Compose 单机部署、最小权限 SA、Prometheus 指标与告警、运维/备份/发布文档 |
 
-完整任务进度见 [`openspec/changes/add-kubedeck-mvp/tasks.md`](openspec/changes/add-kubedeck-mvp/tasks.md)。
+完整任务进度见 [`openspec/changes/archive/2026-11-13-add-kubedeck-mvp/tasks.md`](openspec/changes/archive/2026-11-13-add-kubedeck-mvp/tasks.md)。
 
 > **安全提示**：dev 模式用本地 kubeconfig 直连集群，**没有登录与权限校验**，只能在本机运行，禁止暴露到网络。生产请使用 OIDC + HTTPS。
 
@@ -47,6 +47,19 @@ wsl.exe -d Ubuntu -u root -- bash -lc '
 
 浏览器打开 <http://localhost:8080>。生产部署见 [docs/deployment.md](docs/deployment.md)，本地环境见 [docs/local-environment.md](docs/local-environment.md)。
 
+### Docker Compose（单机）
+
+不依赖 Kubernetes 的单机部署：
+
+```bash
+cd deploy/compose
+cp .env.example .env && chmod 600 .env
+# 填写域名、数据库密码、主密钥与 OIDC 配置
+docker compose up -d --build
+```
+
+完整步骤、集群接入与网络说明见 [deploy/compose/README.md](deploy/compose/README.md)。应用固定单副本；多副本/高可用请使用 Helm。
+
 ## 目录结构
 
 ```
@@ -64,6 +77,7 @@ wsl.exe -d Ubuntu -u root -- bash -lc '
 │   └── store/                   # PostgreSQL 迁移与仓储
 ├── web/                         # React 控制台
 ├── deploy/helm/kubedeck/        # Helm Chart
+├── deploy/compose/              # Docker Compose 单机部署（应用 + PostgreSQL + Caddy）
 ├── deploy/prometheus/           # 告警规则
 ├── docs/                        # 部署、运维、备份、安全、发布文档
 ├── verify/                      # 三项技术验证程序
@@ -91,7 +105,7 @@ wsl.exe -d Ubuntu -u root -- bash -lc '
 - **前端**：React 18、TypeScript、Ant Design 5、TanStack Query 5、Monaco、Vite 5
 - **存储**：PostgreSQL 15+（平台元数据与审计；集群资源状态不入库）
 - **授权**：Impersonation 透传 + Kubernetes 原生 RBAC
-- **部署**：单二进制（前端 `go:embed`）+ Docker + Helm
+- **部署**：单二进制（前端 `go:embed`）+ Docker + Helm / Docker Compose
 - **可观测性**：Prometheus `/metrics`、结构化日志、哈希链审计
 
 ## 测试与质量

@@ -4,6 +4,19 @@
 
 > 本地开发与验收环境见 [local-environment.md](./local-environment.md)。不要把本文中的占位符替换成真实凭据后提交到仓库。
 
+## 非 Kubernetes 部署（Docker Compose）
+
+如果目标环境没有 Kubernetes，使用 [`deploy/compose/`](../deploy/compose/README.md)：KubeDeck + PostgreSQL + Caddy，一条 `docker compose up -d --build` 启动。
+
+适用与边界：
+
+- 适合单机、小团队、演示和边缘环境。
+- 应用固定 **单副本**；会话在进程内存、后台任务无选主，不要横向扩容。
+- 目标集群仍需通过 kubeconfig 或 `server + token + CA` 登记，平台到 apiserver 必须网络可达。
+- 多副本、零停机升级和高可用仍使用本文的 Helm 方案。
+
+Compose 的密钥、备份、WSL/Docker Desktop 网络与故障排查见 [Compose 部署说明](../deploy/compose/README.md)。
+
 ## 1. 前置条件
 
 | 组件 | 要求 |

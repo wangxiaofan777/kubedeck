@@ -21,4 +21,4 @@
 - [x] 4.1 本地构建镜像并启动 Compose 栈，验证 `db` 健康、应用 `/healthz` 与 `/readyz` 返回 200、登录页可访问。验证：`docker compose ps` 与 `curl` 结果。
 - [x] 4.2 验证数据持久化与安全基线：重启 `db` 后平台元数据仍在；应用容器以 nonroot 运行、根文件系统只读；应用端口未直接发布到宿主机。验证：`docker compose restart db`、`docker inspect`、`docker compose ps`。
 - [x] 4.3 验证至少一种目标集群接入路径（本地 k3s 或远程集群）：登记集群、浏览 Pod、打开日志。验证：控制台与 `/api/v1/clusters` 返回正常。
-- [ ] 4.4 执行 `make check`、`openspec validate add-compose-deployment --strict`，确认通过后提交并归档。验证：命令退出码为 0，`git status` 干净。
+- [x] 4.4 执行 `make check`、`openspec validate add-compose-deployment --strict`，确认通过后提交并归档。验证：命令退出码为 0，`git status` 干净。

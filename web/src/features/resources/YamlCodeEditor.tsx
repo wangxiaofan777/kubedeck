@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Spin } from 'antd'
+import { useCallback, useEffect, useRef } from 'react'
 import Editor, { loader } from '@monaco-editor/react'
 import type { editor as monacoEditor } from 'monaco-editor'
 import { monaco } from '../../lib/monaco'
@@ -18,7 +17,6 @@ interface Props {
  * YamlEditor（编辑已有对象）与新建弹窗共用，避免布局 workaround 出现两份。
  */
 export default function YamlCodeEditor({ value, onChange, readOnly = false, height = 420 }: Props) {
-  const [hostReady, setHostReady] = useState(false)
   const editorWrapperRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<monacoEditor.IStandaloneCodeEditor>()
   const nodeObserverRef = useRef<ResizeObserver>()
@@ -43,9 +41,9 @@ export default function YamlCodeEditor({ value, onChange, readOnly = false, heig
       wrapperObserverRef.current?.disconnect()
       editorWrapperRef.current = node
       if (!node) return
-      if (node.clientWidth > 0) setHostReady(true)
+      // 不在 0 宽时阻塞挂载：Monaco 可以先创建，再通过 ensureLayout 校正尺寸。
+      // 之前用 hostReady 门禁会在弹窗/Tab 动画期间永久停在 Spin。
       const observer = new ResizeObserver(() => {
-        if (node.clientWidth > 0) setHostReady(true)
         scheduleLayout()
       })
       observer.observe(node)
@@ -74,39 +72,33 @@ export default function YamlCodeEditor({ value, onChange, readOnly = false, heig
 
   return (
     <div ref={attachWrapper}>
-      {hostReady ? (
-        <Editor
-          height={`${height}px`}
-          language="yaml"
-          value={value}
-          onMount={(instance) => {
-            editorRef.current = instance
-            scheduleLayout()
-            const node = instance.getDomNode()
-            if (node) {
-              nodeObserverRef.current?.disconnect()
-              const observer = new ResizeObserver(() => {
-                scheduleLayout()
-              })
-              observer.observe(node)
-              nodeObserverRef.current = observer
-            }
-          }}
-          onChange={(next) => onChange?.(next ?? '')}
-          options={{
-            readOnly,
-            minimap: { enabled: false },
-            fontSize: 13,
-            scrollBeyondLastLine: false,
-            automaticLayout: true,
-            tabSize: 2,
-          }}
-        />
-      ) : (
-        <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Spin />
-        </div>
-      )}
+      <Editor
+        height={`${height}px`}
+        language="yaml"
+        value={value}
+        onMount={(instance) => {
+          editorRef.current = instance
+          scheduleLayout()
+          const node = instance.getDomNode()
+          if (node) {
+            nodeObserverRef.current?.disconnect()
+            const observer = new ResizeObserver(() => {
+              scheduleLayout()
+            })
+            observer.observe(node)
+            nodeObserverRef.current = observer
+          }
+        }}
+        onChange={(next) => onChange?.(next ?? '')}
+        options={{
+          readOnly,
+          minimap: { enabled: false },
+          fontSize: 13,
+          scrollBeyondLastLine: false,
+          automaticLayout: true,
+          tabSize: 2,
+        }}
+      />
     </div>
   )
 }

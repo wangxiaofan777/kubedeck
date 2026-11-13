@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
@@ -47,6 +48,9 @@ func (f *overviewTransport) Update(context.Context, schema.GroupVersionResource,
 }
 func (f *overviewTransport) Delete(context.Context, schema.GroupVersionResource, string, string, DeleteOptions) error {
 	return errors.New("not implemented")
+}
+func (f *overviewTransport) Patch(context.Context, schema.GroupVersionResource, string, string, types.PatchType, []byte, PatchOptions) (*unstructured.Unstructured, error) {
+	return nil, errors.New("not implemented")
 }
 func (f *overviewTransport) Scale(context.Context, schema.GroupVersionResource, string, string, int32) (*unstructured.Unstructured, error) {
 	return nil, errors.New("not implemented")

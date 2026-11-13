@@ -135,6 +135,34 @@ func (t *DirectTransport) Update(ctx context.Context, gvr schema.GroupVersionRes
 	})
 }
 
+// PatchOptions 是部分更新参数。
+type PatchOptions struct {
+	DryRun       []string
+	FieldManager string
+	Force        bool
+}
+
+// Patch 按媒体类型对已有对象做部分更新；FieldManager 缺省为 kubedeck。
+func (t *DirectTransport) Patch(
+	ctx context.Context,
+	gvr schema.GroupVersionResource,
+	namespace, name string,
+	patchType types.PatchType,
+	data []byte,
+	opts PatchOptions,
+) (*unstructured.Unstructured, error) {
+	fieldManager := opts.FieldManager
+	if fieldManager == "" {
+		fieldManager = "kubedeck"
+	}
+	patchOpts := metav1.PatchOptions{DryRun: opts.DryRun, FieldManager: fieldManager}
+	if opts.Force {
+		force := true
+		patchOpts.Force = &force
+	}
+	return t.dynamic.Resource(gvr).Namespace(namespace).Patch(ctx, name, patchType, data, patchOpts)
+}
+
 // DeleteOptions 是删除参数。
 type DeleteOptions struct {
 	Propagation     metav1.DeletionPropagation

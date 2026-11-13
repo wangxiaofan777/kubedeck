@@ -42,27 +42,37 @@ func (h *handlers) visibleCluster(w http.ResponseWriter, r *http.Request, id aut
 	return cluster, true
 }
 
-// validGVR 解析并校验资源三元组；不在发现结果中时返回 400 与可用类型提示。
-func (h *handlers) validGVR(w http.ResponseWriter, r *http.Request, cluster kube.ClusterAccess) (schema.GroupVersionResource, bool) {
+// validAPIResource 解析并校验资源三元组，返回发现结果中的完整资源元数据。
+// 不在发现结果中时返回 400 与可用类型提示。
+func (h *handlers) validAPIResource(w http.ResponseWriter, r *http.Request, cluster kube.ClusterAccess) (kube.APIResource, bool) {
 	gvr, ok := gvrFromPath(r)
 	if !ok {
 		WriteError(r.Context(), w, NewError(CodeInvalidArgument, "group/version/resource 不能为空"))
-		return schema.GroupVersionResource{}, false
+		return kube.APIResource{}, false
 	}
 	discovery, err := cluster.Discovery(r.Context())
 	if err != nil {
 		WriteError(r.Context(), w, NewError(CodeClusterUnreachable, "资源发现失败，请稍后重试"))
-		return schema.GroupVersionResource{}, false
+		return kube.APIResource{}, false
 	}
 	for _, res := range discovery.Resources {
 		if res.GVR() == gvr {
-			return gvr, true
+			return res, true
 		}
 	}
 	e := NewError(CodeInvalidArgument, fmt.Sprintf("资源类型 %s 不存在", gvrLabel(gvr)))
 	e.Details = map[string]any{"available": resourceHints(discovery.Resources)}
 	WriteError(r.Context(), w, e)
-	return schema.GroupVersionResource{}, false
+	return kube.APIResource{}, false
+}
+
+// validGVR 是 validAPIResource 的薄包装，供只读与更新路径复用。
+func (h *handlers) validGVR(w http.ResponseWriter, r *http.Request, cluster kube.ClusterAccess) (schema.GroupVersionResource, bool) {
+	res, ok := h.validAPIResource(w, r, cluster)
+	if !ok {
+		return schema.GroupVersionResource{}, false
+	}
+	return res.GVR(), true
 }
 
 func gvrLabel(gvr schema.GroupVersionResource) string {
@@ -87,9 +97,17 @@ func resourceHints(resources []kube.APIResource) []string {
 
 // validObjectName 拒绝路径控制字符，避免拼接进上游 URL。
 func validObjectName(w http.ResponseWriter, ctx context.Context, name string) bool {
+	if !isValidObjectName(name) {
+		WriteError(ctx, w, NewError(CodeInvalidArgument, "对象名不合法"))
+		return false
+	}
+	return true
+}
+
+// isValidObjectName 是对象名的纯校验，供写路径按不同错误码复用。
+func isValidObjectName(name string) bool {
 	if name == "" || len(name) > 253 || strings.Contains(name, "/") ||
 		strings.Contains(name, "..") || strings.ContainsAny(name, "\x00\n\r\t") {
-		WriteError(ctx, w, NewError(CodeInvalidArgument, "对象名不合法"))
 		return false
 	}
 	return true

@@ -12,6 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 
 	"github.com/kubedeck/kubedeck/internal/auth"
@@ -31,7 +32,14 @@ type fakeTransport struct {
 	object         *unstructured.Unstructured
 	err            error
 	deleteErrs     map[string]error
+	createCalls    int
+	createdObject  *unstructured.Unstructured
+	createDryRun   []string
 	updateCalls    int
+	patchCalls     int
+	patchType      types.PatchType
+	patchData      []byte
+	patchOpts      kube.PatchOptions
 	logBody        string
 	watcher        watch.Interface
 	watchErr       error
@@ -79,11 +87,21 @@ func (f *fakeTransport) Get(context.Context, schema.GroupVersionResource, string
 func (f *fakeTransport) ReviewAccess(context.Context, kube.AccessRequest) (kube.AccessResult, error) {
 	return kube.AccessResult{Allowed: true}, nil
 }
-func (f *fakeTransport) Create(context.Context, schema.GroupVersionResource, string, *unstructured.Unstructured, []string) (*unstructured.Unstructured, error) {
+func (f *fakeTransport) Create(_ context.Context, _ schema.GroupVersionResource, _ string, obj *unstructured.Unstructured, dryRun []string) (*unstructured.Unstructured, error) {
+	f.createCalls++
+	f.createdObject = obj
+	f.createDryRun = dryRun
 	return f.object, f.err
 }
 func (f *fakeTransport) Update(context.Context, schema.GroupVersionResource, string, *unstructured.Unstructured, []string) (*unstructured.Unstructured, error) {
 	f.updateCalls++
+	return f.object, f.err
+}
+func (f *fakeTransport) Patch(_ context.Context, _ schema.GroupVersionResource, _ string, _ string, patchType types.PatchType, data []byte, opts kube.PatchOptions) (*unstructured.Unstructured, error) {
+	f.patchCalls++
+	f.patchType = patchType
+	f.patchData = data
+	f.patchOpts = opts
 	return f.object, f.err
 }
 func (f *fakeTransport) Delete(_ context.Context, _ schema.GroupVersionResource, _ string, name string, _ kube.DeleteOptions) error {
@@ -121,8 +139,9 @@ func (f *fakeTransport) Watch(context.Context, schema.GroupVersionResource, stri
 }
 
 type fakeCluster struct {
-	t      *fakeTransport
-	status string
+	t         *fakeTransport
+	status    string
+	resources []kube.APIResource
 }
 
 func (c *fakeCluster) Name() string { return c.t.name }
@@ -135,6 +154,9 @@ func (c *fakeCluster) Info(context.Context) kube.ClusterInfo {
 }
 func (c *fakeCluster) TransportFor(kube.UserRef) (kube.Transport, error) { return c.t, nil }
 func (c *fakeCluster) Discovery(context.Context) (kube.DiscoveryResult, error) {
+	if c.resources != nil {
+		return kube.DiscoveryResult{Resources: c.resources}, nil
+	}
 	return kube.DiscoveryResult{Resources: []kube.APIResource{
 		{Group: "apps", Version: "v1", Resource: "deployments", Kind: "Deployment", Namespaced: true},
 		{Version: "v1", Resource: "secrets", Kind: "Secret", Namespaced: true},

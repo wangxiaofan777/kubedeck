@@ -182,6 +182,8 @@ func auditTarget(r *http.Request) (verb, group, resource, namespace, name string
 			verb = "update"
 		case http.MethodPost:
 			verb = "create"
+		case http.MethodPatch:
+			verb = "patch"
 		case http.MethodDelete:
 			if name == "" {
 				verb = "deletecollection"

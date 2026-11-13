@@ -23,7 +23,7 @@ KubeDeck 有两层权限，二者都必须满足：
 - 只绑定具体命名空间的用户：`GET /clusters/{c}/namespaces` 直接返回绑定范围内的命名空间（去重排序），不要求集群级权限，也不会泄露范围外的名称。
 - `*` 绑定或平台管理员：以用户身份向目标集群列举命名空间，只返回 apiserver 允许其查看的名称；该身份在目标集群需要 `namespaces` 的 `list` 权限。
 - `GET /clusters/{c}/api-resources`、集群详情与健康信息只要求目标集群上存在任一绑定。
-- 开发模式（`KUBEDECK_DEV_KUBECONFIG`）固定以 PlatformAdmin 运行，无法演示命名空间隔离；验证隔离需使用 OIDC 普通账号。
+- 开发模式（`KUBEDECK_DEV_KUBECONFIG`）+ `KUBEDECK_DEV_PLATFORM_ADMIN=false` 可按数据库角色绑定运行，用于本地演示命名空间隔离；生产验证仍以 OIDC 普通账号为准。
 
 ## 2. 操作 × Kubernetes 权限
 
@@ -36,6 +36,8 @@ KubeDeck 有两层权限，二者都必须满足：
 | 列表 | `GET /resources/...` | `list` `<resource>`（命名空间内） |
 | 详情 | `GET /resources/.../{name}` | `get` `<resource>` |
 | YAML 读取 | `GET /resources/.../{name}` | `get` `<resource>` |
+| 创建 | `POST /resources/...` | `create` `<resource>`（`dryRun=All` 同样需要 `create`） |
+| 部分更新 | `PATCH /resources/.../{name}` | `patch` `<resource>`；Server-Side Apply 冲突时由调用方显式请求 `force` |
 | Diff / dryRun / 提交 | `POST .../diff`、`PUT` | `get` + `update`（dryRun 也可能需要 `create`） |
 | 删除单个 | `DELETE .../{name}` | `delete` `<resource>` |
 | 批量删除 | `DELETE /resources/...` | `deletecollection` 或逐个 `delete` |

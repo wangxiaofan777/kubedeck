@@ -8,6 +8,8 @@ export interface ResourceType {
   /** core 组用空串，API 层会转换为路径中的 "_"。 */
   gvr: GVR
   namespaced: boolean
+  /** 是否允许在控制台新建；Events/Nodes 由控制器或 kubelet 创建，默认不提供入口。 */
+  creatable?: boolean
 }
 
 export const RESOURCE_TYPES: ResourceType[] = [
@@ -98,6 +100,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
     group: '集群',
     gvr: { group: '', version: 'v1', resource: 'nodes' },
     namespaced: false,
+    creatable: false,
   },
   {
     key: 'namespaces',
@@ -114,6 +117,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
     group: '集群',
     gvr: { group: '', version: 'v1', resource: 'events' },
     namespaced: true,
+    creatable: false,
   },
 ]
 
@@ -167,6 +171,20 @@ export function statusOf(item: ResourceItem, type: ResourceType): string {
 
 export function resolveType(key: string | undefined): ResourceType | undefined {
   return RESOURCE_TYPES.find((t) => t.key === key)
+}
+
+export function isCreatable(type: ResourceType): boolean {
+  return type.creatable !== false
+}
+
+/** createTemplate 只预填身份字段，不生成看似可提交但实际无效的 spec。 */
+export function createTemplate(type: ResourceType, namespace: string): string {
+  const apiVersion = type.gvr.group
+    ? `${type.gvr.group}/${type.gvr.version}`
+    : type.gvr.version
+  const lines = [`apiVersion: ${apiVersion}`, `kind: ${type.kind}`, 'metadata:', '  name: ""']
+  if (type.namespaced) lines.push(`  namespace: ${namespace}`)
+  return `${lines.join('\n')}\n`
 }
 
 export function isWorkload(type: ResourceType): boolean {

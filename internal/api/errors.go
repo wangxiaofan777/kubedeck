@@ -93,8 +93,12 @@ func FromUpstream(err error) *Error {
 		code = CodeForbidden
 	case apierrors.IsNotFound(err):
 		code = CodeNotFound
+	case apierrors.IsAlreadyExists(err):
+		code = CodeConflict
 	case apierrors.IsConflict(err):
 		code = CodeConflict
+	case apierrors.IsMethodNotSupported(err), apierrors.IsUnsupportedMediaType(err):
+		code = CodeUnsupported
 	case apierrors.IsInvalid(err):
 		code = CodeUnprocessable
 	case apierrors.IsBadRequest(err):

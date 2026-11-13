@@ -13,7 +13,7 @@ import {
   Typography,
   message,
 } from 'antd'
-import { DeleteOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
+import { DeleteOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, type ResourceItem } from '../../lib/api'
@@ -22,7 +22,8 @@ import ErrorAlert from '../../components/ErrorAlert'
 import ResourceTable, { itemKey } from '../../components/ResourceTable'
 import { useCan } from '../auth/useCan'
 import { useResourceList } from './useResourceList'
-import { isCrashLoop, resolveType, RESOURCE_TYPES } from './resourceTypes'
+import { isCreatable, isCrashLoop, resolveType, RESOURCE_TYPES } from './resourceTypes'
+import ResourceCreateModal from './ResourceCreateModal'
 
 const PAGE_LIMIT = 500
 
@@ -44,6 +45,7 @@ export default function ResourcesPage() {
   const [selectedKeys, setSelectedKeys] = useState<string[]>([])
   const [batchOpen, setBatchOpen] = useState(false)
   const [batchRunning, setBatchRunning] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
 
   useEffect(() => setSearch(urlSearch), [urlSearch])
   useEffect(() => setLabelInput(labelSelector), [labelSelector])
@@ -82,6 +84,16 @@ export default function ResourcesPage() {
     queryKey,
     resourceVersion: listQuery.data?.resourceVersion,
     enabled: !!cluster && !continueToken,
+  })
+
+  const creatable = isCreatable(type)
+  const createScopeReady = type.namespaced ? !!namespace : true
+  const createCan = useCan({
+    cluster,
+    gvr: type.gvr,
+    namespace: type.namespaced ? namespace : undefined,
+    verb: 'create',
+    enabled: creatable && createScopeReady,
   })
 
   const deleteCan = useCan({
@@ -215,6 +227,21 @@ export default function ResourcesPage() {
               ]}
             />
           )}
+          {creatable && createScopeReady && (createCan.loading || createCan.allowed) && (
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              disabled={createCan.loading}
+              onClick={() => setCreateOpen(true)}
+            >
+              新建
+            </Button>
+          )}
+          {creatable && type.namespaced && !namespace && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              选择命名空间后可新建
+            </Typography.Text>
+          )}
           <Button
             icon={<ReloadOutlined />}
             onClick={() => {
@@ -322,6 +349,21 @@ export default function ResourcesPage() {
           ))}
         </ul>
       </Modal>
+
+      {cluster && (
+        <ResourceCreateModal
+          open={createOpen}
+          cluster={cluster}
+          type={type}
+          namespace={namespace}
+          onCancel={() => setCreateOpen(false)}
+          onCreated={(item) => {
+            setCreateOpen(false)
+            void queryClient.invalidateQueries({ queryKey: ['resources'] })
+            openDetail(item)
+          }}
+        />
+      )}
     </div>
   )
 }

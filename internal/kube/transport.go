@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
@@ -73,6 +74,8 @@ type Transport interface {
 	ReviewAccess(ctx context.Context, req AccessRequest) (AccessResult, error)
 	Create(ctx context.Context, gvr schema.GroupVersionResource, namespace string, obj *unstructured.Unstructured, dryRun []string) (*unstructured.Unstructured, error)
 	Update(ctx context.Context, gvr schema.GroupVersionResource, namespace string, obj *unstructured.Unstructured, dryRun []string) (*unstructured.Unstructured, error)
+	// Patch 按媒体类型对已有对象做部分更新（合并、策略合并或 Server-Side Apply）。
+	Patch(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, patchType types.PatchType, data []byte, opts PatchOptions) (*unstructured.Unstructured, error)
 	Delete(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, opts DeleteOptions) error
 	// Scale 通过 scale 子资源调整副本数，避免与主体更新冲突。
 	Scale(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, replicas int32) (*unstructured.Unstructured, error)

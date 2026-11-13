@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -24,6 +25,12 @@ func TestFromUpstream_Mapping(t *testing.T) {
 		{"forbidden", apierrors.NewForbidden(gr, "web", errors.New("denied")), CodeForbidden, http.StatusForbidden},
 		{"not found", apierrors.NewNotFound(gr, "web"), CodeNotFound, http.StatusNotFound},
 		{"conflict", apierrors.NewConflict(gr, "web", errors.New("rv mismatch")), CodeConflict, http.StatusConflict},
+		{"already exists", apierrors.NewAlreadyExists(gr, "web"), CodeConflict, http.StatusConflict},
+		{"method not supported", apierrors.NewMethodNotSupported(gr, "patch"), CodeUnsupported, http.StatusBadRequest},
+		{"unsupported media type", &apierrors.StatusError{ErrStatus: metav1.Status{
+			Status: metav1.StatusFailure, Code: http.StatusUnsupportedMediaType,
+			Reason: metav1.StatusReasonUnsupportedMediaType, Message: "bad media",
+		}}, CodeUnsupported, http.StatusBadRequest},
 		{"invalid", apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, "web", nil), CodeUnprocessable, http.StatusUnprocessableEntity},
 		{"bad request", apierrors.NewBadRequest("malformed"), CodeInvalidArgument, http.StatusBadRequest},
 		{"too many requests", apierrors.NewTooManyRequests("slow down", 1), CodeRateLimited, http.StatusTooManyRequests},

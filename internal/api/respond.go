@@ -27,8 +27,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 // writeYAML 输出 YAML 文本响应。
 func writeYAML(w http.ResponseWriter, body []byte) {
+	writeYAMLStatus(w, http.StatusOK, body)
+}
+
+// writeYAMLStatus 输出指定状态码的 YAML 文本响应。
+func writeYAMLStatus(w http.ResponseWriter, status int, body []byte) {
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	_, _ = w.Write(body)
 }
 

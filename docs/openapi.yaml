@@ -357,6 +357,30 @@ paths:
       responses:
         "200": { description: list }
         "400": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [resources]
+      summary: 创建资源（YAML/JSON，支持 dryRun）
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+        - in: query
+          name: dryRun
+          schema: { type: string, enum: [All] }
+        - in: query
+          name: format
+          schema: { type: string, enum: [json, yaml] }
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema: { type: string }
+          application/json:
+            schema: { type: object }
+      responses:
+        "201": { description: created }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
     delete:
       tags: [resources]
       summary: 批量删除
@@ -412,6 +436,38 @@ paths:
       responses:
         "200": { description: updated }
         "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [resources]
+      summary: 部分更新（合并 / 策略合并 / Server-Side Apply）
+      parameters:
+        - $ref: "#/components/parameters/NamespaceQuery"
+        - in: query
+          name: dryRun
+          schema: { type: string, enum: [All] }
+        - in: query
+          name: fieldManager
+          schema: { type: string }
+        - in: query
+          name: force
+          schema: { type: boolean }
+        - in: query
+          name: format
+          schema: { type: string, enum: [json, yaml] }
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { type: object }
+          application/strategic-merge-patch+json:
+            schema: { type: object }
+          application/apply-patch+yaml:
+            schema: { type: object }
+      responses:
+        "200": { description: patched }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
     delete:
       tags: [resources]

@@ -8,6 +8,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
@@ -39,6 +40,9 @@ func (f *fakeTransport) Update(context.Context, schema.GroupVersionResource, str
 }
 func (f *fakeTransport) Delete(context.Context, schema.GroupVersionResource, string, string, DeleteOptions) error {
 	return nil
+}
+func (f *fakeTransport) Patch(context.Context, schema.GroupVersionResource, string, string, types.PatchType, []byte, PatchOptions) (*unstructured.Unstructured, error) {
+	return &unstructured.Unstructured{}, nil
 }
 
 func (f *fakeTransport) Scale(context.Context, schema.GroupVersionResource, string, string, int32) (*unstructured.Unstructured, error) {

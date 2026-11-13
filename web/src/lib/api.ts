@@ -483,6 +483,26 @@ export const api = {
     )
   },
 
+  create(params: {
+    cluster: string
+    gvr: GVR
+    namespace?: string
+    yaml: string
+    dryRun?: boolean
+  }): Promise<ResourceItem> {
+    return request<ResourceItem>(
+      `${resourcePath(params.cluster, params.gvr)}${query({
+        namespace: params.namespace,
+        dryRun: params.dryRun ? 'All' : undefined,
+      })}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/yaml' },
+        body: params.yaml,
+      },
+    )
+  },
+
   remove(params: {
     cluster: string
     gvr: GVR

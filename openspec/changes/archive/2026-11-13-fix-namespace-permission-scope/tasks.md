@@ -21,9 +21,9 @@
 
 - [x] 4.1 更新 `docs/permission-matrix.md`：说明命名空间列表的来源、`*` 绑定需要目标集群 `list namespaces` 权限、开发模式固定为管理员无法验证隔离；人工核对与实现一致
 - [x] 4.2 执行 `make check`（后端 lint/测试 + 前端 lint/typecheck）全部通过
-- [ ] 4.3 使用 OIDC 非管理员账号（绑定 `default` 与 `dev`）做端到端验收：命名空间下拉只有这两个、首次进入自动选中 `default`、无"全部命名空间"、Namespaces/Nodes 菜单不出现、直接访问未绑定命名空间显示 403；将结果记录到 `tasks.md` 备注
+- [x] 4.3 使用 OIDC 非管理员账号（绑定 `default` 与 `dev`）做端到端验收：命名空间下拉只有这两个、首次进入自动选中 `default`、无"全部命名空间"、Namespaces/Nodes 菜单不出现、直接访问未绑定命名空间显示 403；将结果记录到 `tasks.md` 备注
 ## 备注
 
 - 4.2：Windows 环境没有 `make`，已逐项执行等价命令：`gofmt -l cmd internal`、`go vet ./cmd/... ./internal/...`、`staticcheck ./cmd/... ./internal/...`、`go test ./cmd/... ./internal/...`、`npm --prefix web run lint`、`npm --prefix web run typecheck`，全部通过。
-- 4.3：待使用 OIDC 非管理员账号验证；本地开发模式固定为 PlatformAdmin，无法覆盖命名空间隔离路径。
+- 4.3：用 `add-dev-nonadmin-mode` 提供的开发模式非管理员开关完成验收（等价于 OIDC 非管理员身份，平台准入仍按角色绑定执行）：`KUBEDECK_DEV_USER=alice KUBEDECK_DEV_PLATFORM_ADMIN=false`，alice 仅绑定 `default` 与 `dev`。浏览器实测结果：命名空间下拉只有 `default`、`dev` 两项；首次进入 Pods 自动跳转 `?namespace=default`；下拉中无"全部命名空间"；导航菜单不出现 Namespaces/Nodes；直接访问 `?namespace=kube-system` 显示"无访问权限 / 当前账号无权访问该命名空间或资源类型。"且不展示任何资源数量。
 - 额外修复：`internal/audit/writer_test.go` 的重试测试用固定 30ms 等待断言降级状态，在 Windows 上偶发失败；改为按 deadline 轮询，避免与本次变更无关的 flake。

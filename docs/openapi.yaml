@@ -235,7 +235,7 @@ paths:
       - $ref: "#/components/parameters/Cluster"
     get:
       tags: [clusters]
-      summary: 集群总览（节点、容量、Pod 状态、异常工作负载、最近事件）
+      summary: 集群总览（节点、容量、Pod 状态、异常工作负载、资源用量、最近事件）
       responses:
         "200":
           description: overview
@@ -293,6 +293,11 @@ paths:
                         object: { type: string }
                         message: { type: string }
                         lastTimestamp: { type: string, format: date-time }
+                  usage:
+                    nullable: true
+                    allOf:
+                      - $ref: "#/components/schemas/ClusterUsage"
+                    description: 指标不可用时为 null，并在 unavailable 中含 metrics
                   unavailable:
                     type: array
                     items: { type: string }
@@ -969,6 +974,36 @@ components:
       properties:
         total: { type: integer }
         unavailable: { type: integer }
+    ClusterUsage:
+      type: object
+      required: [available, scope, fetchedAt, cpuMilli, memoryBytes]
+      properties:
+        available: { type: boolean }
+        scope:
+          type: string
+          enum: [nodes, pods]
+          description: nodes 为节点用量，pods 为可见命名空间内 Pod 用量
+        fetchedAt: { type: string, format: date-time }
+        cpuMilli: { type: integer, format: int64 }
+        memoryBytes: { type: integer, format: int64 }
+        cpuAllocatableMilli:
+          type: integer
+          format: int64
+          nullable: true
+          description: 仅 scope=nodes 时返回
+        memoryAllocatableBytes:
+          type: integer
+          format: int64
+          nullable: true
+          description: 仅 scope=nodes 时返回
+        cpuPercent:
+          type: number
+          nullable: true
+          description: 按可分配值计算，保留两位小数；仅 scope=nodes 时返回
+        memoryPercent:
+          type: number
+          nullable: true
+          description: 按可分配值计算，保留两位小数；仅 scope=nodes 时返回
     Error:
       type: object
       required: [code, message, requestId]

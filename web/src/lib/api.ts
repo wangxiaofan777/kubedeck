@@ -54,6 +54,18 @@ export interface OverviewEvent {
   lastTimestamp: string
 }
 
+export interface ClusterUsage {
+  available: boolean
+  scope: 'nodes' | 'pods'
+  fetchedAt: string
+  cpuMilli: number
+  memoryBytes: number
+  cpuAllocatableMilli: number | null
+  memoryAllocatableBytes: number | null
+  cpuPercent: number | null
+  memoryPercent: number | null
+}
+
 export interface ClusterOverview {
   cluster: string
   fetchedAt: string
@@ -63,6 +75,7 @@ export interface ClusterOverview {
   pods: OverviewPods
   workloads: OverviewWorkloads
   events: OverviewEvent[]
+  usage?: ClusterUsage | null
   unavailable: string[]
 }
 

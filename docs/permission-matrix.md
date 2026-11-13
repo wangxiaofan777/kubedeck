@@ -74,7 +74,12 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
 ```
+
+总览的资源用量同样走 Impersonation：节点级用量与容量需要 `nodes.metrics.k8s.io` 的 `list` 权限（通常来自集群级绑定）；仅绑定到命名空间的用户只会拿到这些命名空间内 Pod 的用量合计，响应中不会出现节点容量或使用率。
 
 Developer 在此基础上增加写权限（按命名空间绑定）：
 

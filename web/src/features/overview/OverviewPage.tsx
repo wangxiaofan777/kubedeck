@@ -2,8 +2,8 @@ import { Alert, Button, Card, Col, Empty, Progress, Row, Space, Spin, Statistic,
 import { ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useParams } from 'react-router-dom'
-import { ApiError, type OverviewEvent } from '../../lib/api'
-import { useOverview } from './useOverview'
+import { ApiError, type ClusterUsage, type OverviewEvent } from '../../lib/api'
+import { useOverview, useUsageTrend, type UsageSample } from './useOverview'
 
 const { Title, Text } = Typography
 
@@ -15,6 +15,7 @@ const UNAVAILABLE_LABELS: Record<string, string> = {
   statefulsets: 'StatefulSet',
   daemonsets: 'DaemonSet',
   events: '事件',
+  metrics: '资源用量',
 }
 
 const EVENT_COLUMNS: ColumnsType<OverviewEvent> = [
@@ -60,10 +61,110 @@ function unavailableLabel(key: string): string {
   return UNAVAILABLE_LABELS[key] ?? key
 }
 
+function formatPercent(value: number): string {
+  return `${value.toFixed(2)}%`
+}
+
+/** Sparkline 用内联 SVG 绘制，避免为单条趋势引入图表库。 */
+function Sparkline({ values, color }: { values: number[]; color: string }) {
+  if (values.length < 2) {
+    return <Text type="secondary">采样中，稍后显示趋势</Text>
+  }
+  const max = Math.max(...values)
+  const min = Math.min(...values)
+  const span = max - min || 1
+  const points = values
+    .map((value, index) => {
+      const x = (index / (values.length - 1)) * 240
+      const y = 44 - ((value - min) / span) * 40
+      return `${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+  return (
+    <svg viewBox="0 0 240 48" width="100%" height="48" role="img" aria-label="用量趋势">
+      <polyline points={points} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+/** UsageCard 展示当前用量与会话内趋势；指标不可用或范围受限时给出明确提示。 */
+function UsageCard({ usage, samples }: { usage?: ClusterUsage | null; samples: UsageSample[] }) {
+  if (!usage) {
+    return (
+      <Card title="资源用量" extra={<Tag>不可用</Tag>}>
+        <Alert
+          type="info"
+          showIcon
+          message="指标不可用"
+          description="集群未启用指标 API（metrics-server），或当前账号没有指标读取权限。其余统计不受影响，稍后可刷新重试。"
+        />
+      </Card>
+    )
+  }
+
+  const scoped = usage.scope === 'pods'
+  const cpuValues = samples.map((sample) => sample.cpuMilli)
+  const memoryValues = samples.map((sample) => sample.memoryBytes)
+  const windowSeconds = (samples.length - 1) * 30
+  const windowLabel =
+    windowSeconds > 0 ? (windowSeconds < 60 ? `约 ${windowSeconds} 秒` : `约 ${Math.round(windowSeconds / 60)} 分钟`) : ''
+
+  return (
+    <Card
+      title="资源用量"
+      extra={<Tag color={scoped ? 'blue' : 'green'}>{scoped ? '仅可见命名空间' : '节点口径'}</Tag>}
+    >
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <Statistic title="CPU 用量" value={formatMilliCPU(usage.cpuMilli)} />
+          {usage.cpuPercent != null && (
+            <Progress
+              percent={Math.min(100, usage.cpuPercent)}
+              format={() => formatPercent(usage.cpuPercent as number)}
+              size="small"
+              style={{ marginTop: 8 }}
+            />
+          )}
+          {scoped && <Text type="secondary">仅统计可见命名空间内 Pod</Text>}
+        </Col>
+        <Col xs={24} md={12}>
+          <Statistic title="内存用量" value={formatBytes(usage.memoryBytes)} />
+          {usage.memoryPercent != null && (
+            <Progress
+              percent={Math.min(100, usage.memoryPercent)}
+              format={() => formatPercent(usage.memoryPercent as number)}
+              size="small"
+              style={{ marginTop: 8 }}
+            />
+          )}
+          {scoped && <Text type="secondary">仅统计可见命名空间内 Pod</Text>}
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 8]} style={{ marginTop: 16 }}>
+        <Col xs={24} md={12}>
+          <Text type="secondary">CPU 趋势</Text>
+          <Sparkline values={cpuValues} color="#1677ff" />
+        </Col>
+        <Col xs={24} md={12}>
+          <Text type="secondary">内存趋势</Text>
+          <Sparkline values={memoryValues} color="#52c41a" />
+        </Col>
+      </Row>
+
+      <Text type="secondary">
+        本次会话采样 {samples.length} 个点
+        {windowLabel ? `（${windowLabel}）` : ''}，刷新或重新进入页面后重新开始。
+      </Text>
+    </Card>
+  )
+}
+
 /** OverviewPage 是进入集群后的默认落地页，只读、按权限范围统计。 */
 export default function OverviewPage() {
   const { cluster } = useParams<{ cluster: string }>()
   const overview = useOverview(cluster)
+  const usageSamples = useUsageTrend(cluster, overview.data?.usage)
 
   if (overview.isLoading) {
     return (
@@ -192,6 +293,8 @@ export default function OverviewPage() {
           </Card>
         </Col>
       </Row>
+
+      <UsageCard usage={data.usage} samples={usageSamples} />
 
       <Card title="Pod 状态" extra={<Tag>{data.pods.total} 个</Tag>}>
         {data.pods.total === 0 ? (

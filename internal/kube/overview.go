@@ -38,15 +38,17 @@ var (
 
 // Overview 是单集群总览的聚合结果。所有计数均按当前用户身份实时读取。
 type Overview struct {
-	Cluster     string            `json:"cluster"`
-	FetchedAt   time.Time         `json:"fetchedAt"`
-	Scope       OverviewScope     `json:"scope"`
-	Nodes       OverviewNodes     `json:"nodes"`
-	Namespaces  OverviewNamespace `json:"namespaces"`
-	Pods        OverviewPods      `json:"pods"`
-	Workloads   OverviewWorkloads `json:"workloads"`
-	Events      []OverviewEvent   `json:"events"`
-	Unavailable []string          `json:"unavailable"`
+	Cluster    string            `json:"cluster"`
+	FetchedAt  time.Time         `json:"fetchedAt"`
+	Scope      OverviewScope     `json:"scope"`
+	Nodes      OverviewNodes     `json:"nodes"`
+	Namespaces OverviewNamespace `json:"namespaces"`
+	Pods       OverviewPods      `json:"pods"`
+	Workloads  OverviewWorkloads `json:"workloads"`
+	Events     []OverviewEvent   `json:"events"`
+	// Usage 为 nil 表示指标不可用；具体原因记入 Unavailable。
+	Usage       *OverviewUsage `json:"usage"`
+	Unavailable []string       `json:"unavailable"`
 }
 
 // OverviewScope 描述统计覆盖范围。
@@ -268,8 +270,26 @@ func CollectOverview(ctx context.Context, cluster string, t Transport, opts Over
 		markSucceeded()
 	}()
 
+	// 用量：指标 API 不可用或越权时只降级该项，不影响其它统计。
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sectionCtx, cancel := context.WithTimeout(collectCtx, overviewSectionTimeout)
+		defer cancel()
+		usage, err := CollectUsage(sectionCtx, t, opts, sem)
+		if err != nil {
+			markUnavailable("metrics")
+			return
+		}
+		mu.Lock()
+		overview.Usage = usage
+		mu.Unlock()
+		markSucceeded()
+	}()
+
 	wg.Wait()
 
+	overview.fillUsageCapacity()
 	overview.Scope.Namespaces = len(namespaces)
 	overview.Scope.AllNamespaces = !fellBack
 	sort.Strings(overview.Unavailable)

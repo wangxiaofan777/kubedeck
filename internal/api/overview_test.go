@@ -204,3 +204,145 @@ func TestClusterOverviewDegraded(t *testing.T) {
 		t.Fatalf("code = %s, want CLUSTER_DEGRADED", body.Code)
 	}
 }
+
+func overviewNodeMetrics(cpu, memory string) *unstructured.UnstructuredList {
+	return &unstructured.UnstructuredList{Items: []unstructured.Unstructured{{Object: map[string]any{
+		"apiVersion": "metrics.k8s.io/v1beta1",
+		"kind":       "NodeMetrics",
+		"metadata":   map[string]any{"name": "n1"},
+		"timestamp":  "2026-11-13T08:30:00Z",
+		"usage":      map[string]any{"cpu": cpu, "memory": memory},
+	}}}}
+}
+
+func overviewPodMetrics(namespace, name, cpu, memory string) *unstructured.UnstructuredList {
+	return &unstructured.UnstructuredList{Items: []unstructured.Unstructured{{Object: map[string]any{
+		"apiVersion": "metrics.k8s.io/v1beta1",
+		"kind":       "PodMetrics",
+		"metadata":   map[string]any{"namespace": namespace, "name": name},
+		"timestamp":  "2026-11-13T08:30:00Z",
+		"containers": []any{map[string]any{
+			"name":  "app",
+			"usage": map[string]any{"cpu": cpu, "memory": memory},
+		}},
+	}}}}
+}
+
+func TestClusterOverviewUsageFromNodeMetrics(t *testing.T) {
+	transport := &fakeTransport{
+		name:       "prod",
+		namespaces: []string{"default"},
+		listFn: func(gvr schema.GroupVersionResource, _ string) (*unstructured.UnstructuredList, error) {
+			switch {
+			case gvr.Group == "metrics.k8s.io" && gvr.Resource == "nodes":
+				return overviewNodeMetrics("500m", "1Gi"), nil
+			case gvr.Group == "" && gvr.Resource == "nodes":
+				return &unstructured.UnstructuredList{Items: []unstructured.Unstructured{{Object: map[string]any{
+					"apiVersion": "v1",
+					"kind":       "Node",
+					"metadata":   map[string]any{"name": "n1"},
+					"status": map[string]any{
+						"conditions":  []any{map[string]any{"type": "Ready", "status": "True"}},
+						"allocatable": map[string]any{"cpu": "2", "memory": "4Gi"},
+					},
+				}}}}, nil
+			}
+			return &unstructured.UnstructuredList{}, nil
+		},
+	}
+	router := overviewRouter(transport, auth.Identity{Subject: "admin", PlatformAdmin: true}, nil)
+
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/clusters/prod/overview")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body kube.Overview
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Usage == nil {
+		t.Fatal("usage is nil")
+	}
+	if body.Usage.Scope != kube.UsageScopeNodes || body.Usage.CPUMilli != 500 {
+		t.Fatalf("usage = %+v", body.Usage)
+	}
+	if body.Usage.CPUPercent == nil || *body.Usage.CPUPercent != 25 {
+		t.Fatalf("cpuPercent = %v, want 25", body.Usage.CPUPercent)
+	}
+	if body.Usage.CPUAllocatableMilli == nil || *body.Usage.CPUAllocatableMilli != 2000 {
+		t.Fatalf("cpuAllocatableMilli = %v, want 2000", body.Usage.CPUAllocatableMilli)
+	}
+}
+
+func TestClusterOverviewMetricsUnavailable(t *testing.T) {
+	transport := &fakeTransport{
+		name:       "prod",
+		namespaces: []string{"default"},
+		listFn: func(gvr schema.GroupVersionResource, _ string) (*unstructured.UnstructuredList, error) {
+			if gvr.Group == "metrics.k8s.io" {
+				return nil, apierrors.NewNotFound(schema.GroupResource{Group: "metrics.k8s.io", Resource: gvr.Resource}, "")
+			}
+			return &unstructured.UnstructuredList{}, nil
+		},
+	}
+	router := overviewRouter(transport, auth.Identity{Subject: "admin", PlatformAdmin: true}, nil)
+
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/clusters/prod/overview")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with degraded metrics", rec.Code)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if raw["usage"] != nil {
+		t.Fatalf("usage = %v, want null", raw["usage"])
+	}
+	unavailable, _ := raw["unavailable"].([]any)
+	found := false
+	for _, item := range unavailable {
+		if item == "metrics" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("unavailable = %v, want metrics", unavailable)
+	}
+}
+
+func TestClusterOverviewScopedUsageHidesCapacity(t *testing.T) {
+	transport := &fakeTransport{
+		name:       "prod",
+		namespaces: []string{"default", "other"},
+		listFn: func(gvr schema.GroupVersionResource, namespace string) (*unstructured.UnstructuredList, error) {
+			if gvr.Group == "metrics.k8s.io" && gvr.Resource == "pods" {
+				if namespace != "default" {
+					return &unstructured.UnstructuredList{}, nil
+				}
+				return overviewPodMetrics("default", "web", "120m", "256Mi"), nil
+			}
+			return &unstructured.UnstructuredList{}, nil
+		},
+	}
+	identity := auth.Identity{UserID: 7, Subject: "alice"}
+	bindings := []domain.RoleBinding{{UserID: 7, ClusterName: "prod", Namespace: "default"}}
+	router := overviewRouter(transport, identity, bindings)
+
+	rec := doRequest(t, router, http.MethodGet, "/api/v1/clusters/prod/overview")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body kube.Overview
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Usage == nil {
+		t.Fatal("usage is nil")
+	}
+	if body.Usage.Scope != kube.UsageScopePods || body.Usage.CPUMilli != 120 {
+		t.Fatalf("usage = %+v", body.Usage)
+	}
+	if body.Usage.CPUPercent != nil || body.Usage.CPUAllocatableMilli != nil || body.Usage.MemoryAllocatableBytes != nil {
+		t.Fatalf("scoped usage leaked capacity: %+v", body.Usage)
+	}
+}

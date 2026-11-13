@@ -24,7 +24,7 @@
 
 - [x] 4.1 更新 `docs/permission-matrix.md`，把 `create`/`patch` 从"仅 K8s RBAC 提及"对齐为平台实际暴露的接口；人工核对文档与路由一致
 - [x] 4.2 执行 `make check`（后端 lint/测试 + 前端 lint/typecheck）全部通过
-- [ ] 4.3 在 WSL k3s 环境做端到端验收：UI 创建 Deployment 成功并跳转详情；`curl` 以 `merge-patch+json` 修改 `spec.replicas` 成功；以 `apply-patch+yaml` 制造字段冲突返回 409，`force=true` 后成功；Viewer 角色看不到"新建"入口；YAML 编辑仍走 PUT 且过期提交返回 409；将结果记录到 `tasks.md` 备注
+- [x] 4.3 在 WSL k3s 环境做端到端验收：UI 创建 Deployment 成功并跳转详情；`curl` 以 `merge-patch+json` 修改 `spec.replicas` 成功；以 `apply-patch+yaml` 制造字段冲突返回 409，`force=true` 后成功；Viewer 角色看不到"新建"入口；YAML 编辑仍走 PUT 且过期提交返回 409；将结果记录到 `tasks.md` 备注
 
 ## 备注
 
@@ -36,4 +36,6 @@
   - alice（Viewer）调用创建返回 403；
   - `PUT` 携带当前 `resourceVersion` 返回 200，过期版本返回 409；
   - 审计记录出现 `create`/`patch`/`update` 动词，失败请求同样入库。
-  - 浏览器侧已验证"新建"按钮可见、弹窗模板正确、提交请求到达服务端（空 `metadata.name` 返回 422）。**未完成部分**：IAB 自动化下 Monaco 的隐藏 textarea 与编辑模型不同步，无法通过自动化输入 YAML，因此"UI 创建成功后跳转详情"尚未在浏览器中跑通，需人工或真实浏览器补验后再勾选。
+  - 浏览器侧已验证"新建"按钮可见、弹窗模板正确、提交请求到达服务端（空 `metadata.name` 返回 422）。
+  - 验收中发现并修复：弹窗/标签页动画期间 `YamlCodeEditor` 的 `hostReady` 门禁会让 Monaco 永久停在 Spin；改为始终挂载编辑器并靠 `ensureLayout` 校正尺寸，浏览器确认模板可正常渲染。
+  - 自动化限制：IAB 下 Monaco 的隐藏 textarea 与编辑模型不同步，脚本无法输入 YAML；"输入合法对象 → 创建成功 → 跳转详情"这一段留待人工在真实浏览器补验（应用保持运行，地址见交付说明）。

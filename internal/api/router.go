@@ -107,6 +107,7 @@ func NewRouter(opts Options) http.Handler {
 
 		api.Get("/clusters", h.listClusters)
 		api.With(h.requireAdmin).Post("/clusters", h.createCluster)
+		api.With(h.requireAdmin).Post("/clusters/probe", h.probeCluster)
 		api.Route("/clusters/{cluster}", func(c chi.Router) {
 			c.Get("/", h.getCluster)
 			c.Get("/health", h.getClusterHealth)
@@ -131,6 +132,10 @@ func NewRouter(opts Options) http.Handler {
 			c.Post("/workloads/{group}/{version}/{resource}/{name}/resume", h.resumeWorkload)
 			c.Post("/pods/{namespace}/{name}/evict", h.evictPod)
 			c.Get("/pods/{namespace}/{name}/log", h.podLog)
+			c.Get("/nodes/{name}/pods", h.nodePods)
+			c.Post("/nodes/{name}/cordon", h.cordonNode)
+			c.Post("/nodes/{name}/uncordon", h.uncordonNode)
+			c.Post("/nodes/{name}/drain", h.drainNode)
 			c.Get("/events", h.listEvents)
 			c.Get("/operations/{id}", h.getOperation)
 			c.Get("/stream", h.stream)
@@ -142,13 +147,14 @@ func NewRouter(opts Options) http.Handler {
 
 		api.Route("/admin", func(a chi.Router) {
 			a.Use(h.requireAdmin)
-			a.Get("/users", h.listUsers)
-			a.Post("/users/{id}/status", h.setUserStatus)
-			a.Get("/roles", h.listRoles)
-			a.Get("/clusters", h.listAdminClusters)
-			a.Get("/role-bindings", h.listRoleBindings)
-			a.Put("/role-bindings", h.putUserAccess)
-			a.Delete("/role-bindings/{id}", h.deleteRoleBinding)
+			// 用户、角色与绑定依赖平台数据库；审计接口使用独立的审计存储。
+			a.With(h.requirePlatformStore).Get("/users", h.listUsers)
+			a.With(h.requirePlatformStore).Post("/users/{id}/status", h.setUserStatus)
+			a.With(h.requirePlatformStore).Get("/roles", h.listRoles)
+			a.With(h.requirePlatformStore).Get("/clusters", h.listAdminClusters)
+			a.With(h.requirePlatformStore).Get("/role-bindings", h.listRoleBindings)
+			a.With(h.requirePlatformStore).Put("/role-bindings", h.putUserAccess)
+			a.With(h.requirePlatformStore).Delete("/role-bindings/{id}", h.deleteRoleBinding)
 			a.Get("/audit-logs", h.listAuditLogs)
 			a.Get("/audit-logs/stats", h.auditStats)
 			a.Get("/audit-logs/verify", h.verifyAuditChain)

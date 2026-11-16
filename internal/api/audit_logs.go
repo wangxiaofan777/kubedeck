@@ -70,8 +70,9 @@ func (h *handlers) verifyAuditChain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := map[string]any{
-		"checked": status.Checked,
-		"intact":  status.BrokenID == 0,
+		"checked":   status.Checked,
+		"intact":    status.BrokenID == 0,
+		"truncated": status.Truncated,
 	}
 	if status.BrokenID != 0 {
 		resp["brokenId"] = status.BrokenID
@@ -91,14 +92,17 @@ func (h *handlers) exportAuditLogs(w http.ResponseWriter, r *http.Request) {
 		WriteError(r.Context(), w, NewError(CodeInvalidArgument, err.Error()))
 		return
 	}
-	if filter.Limit <= 0 || filter.Limit > 5000 {
-		filter.Limit = 5000
-	}
+	// 导出不使用交互分页大小；单次上限 5000，并在响应头标明实际条数与是否触顶。
+	filter.Limit = 5000
 	filter.Offset = 0
 	entries, err := h.auditStore.QueryAudit(r.Context(), filter)
 	if err != nil {
 		WriteError(r.Context(), w, NewError(CodeInternal, "审计导出失败"))
 		return
+	}
+	w.Header().Set("X-Audit-Export-Count", strconv.Itoa(len(entries)))
+	if len(entries) >= filter.Limit {
+		w.Header().Set("X-Audit-Export-Truncated", "true")
 	}
 
 	format := strings.ToLower(r.URL.Query().Get("format"))

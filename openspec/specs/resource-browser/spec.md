@@ -251,3 +251,155 @@
 
 - **WHEN** 用户对 YAML 声明的目标类型没有 `create` 权限
 - **THEN** 服务端 SHALL 返回 403，界面 SHALL 展示无权限错误，且不泄露对象内容
+
+### Requirement: 命名空间单一来源
+
+涉及具体对象的操作 SHALL 只使用一个命名空间值。路径中的命名空间与查询参数不一致时，系统 MUST 返回 400 `INVALID_ARGUMENT`，MUST NOT 用其中一个做准入检查、用另一个执行操作。
+
+#### Scenario: 参数不一致
+
+- **WHEN** 用户请求 `/clusters/prod/pods/kube-system/foo/log?namespace=team-a`
+- **THEN** 系统 SHALL 返回 400，且不向目标集群发起任何请求
+
+#### Scenario: 平台绑定与实际对象一致
+
+- **WHEN** 用户只绑定了 `team-a`，请求 `team-a` 下 Pod 的日志且未携带 query 参数
+- **THEN** 平台准入与实际读取 SHALL 都作用于 `team-a`
+
+### Requirement: 上游错误脱敏
+
+返回给客户端的错误 MUST NOT 包含 apiserver 的原始响应、内部地址、RBAC 角色名或证书细节。系统 SHALL 返回稳定错误码与脱敏消息，并将原始错误写入服务端日志用于排障。
+
+#### Scenario: apiserver 拒绝请求
+
+- **WHEN** apiserver 返回 403 并带有内部角色信息
+- **THEN** 客户端 SHALL 只收到 `FORBIDDEN` 与通用说明，原始内容 SHALL 只出现在服务端日志
+
+#### Scenario: 集群不可达
+
+- **WHEN** 连接目标集群失败
+- **THEN** 客户端 SHALL 收到 `CLUSTER_UNREACHABLE`，消息 MUST NOT 包含内部 IP 或 DNS 细节
+
+### Requirement: 节点视图
+
+系统 SHALL 提供节点列表与节点详情，展示就绪状态、角色、版本、可分配 CPU/内存、Taints、Labels、Conditions 与该节点上的 Pod。节点列表 MUST 明确标识已停止调度的节点。
+
+#### Scenario: 查看节点列表
+
+- **WHEN** 用户打开节点页面
+- **THEN** 列表 SHALL 展示每个节点的角色、状态、版本、可分配资源、Pod 数与是否可调度
+
+#### Scenario: 查看节点上的 Pod
+
+- **WHEN** 用户打开某节点详情
+- **THEN** 系统 SHALL 展示该节点上的全部 Pod，并可跳转到 Pod 详情
+
+#### Scenario: 指标不可用
+
+- **WHEN** 集群没有 metrics API
+- **THEN** 节点页面 SHALL 仍展示可分配资源与状态，并标注实际用量不可用
+
+### Requirement: 节点调度控制
+
+系统 SHALL 支持 cordon 与 uncordon，操作 MUST 经目标集群 apiserver 以当前用户身份鉴权，并写入审计。
+
+#### Scenario: 停止调度
+
+- **WHEN** 用户对节点执行 cordon
+- **THEN** 节点 `spec.unschedulable` SHALL 变为 true，界面 SHALL 显示「已停止调度」
+
+#### Scenario: 恢复调度
+
+- **WHEN** 用户对已 cordon 的节点执行 uncordon
+- **THEN** 节点 SHALL 恢复可调度，界面状态同步更新
+
+#### Scenario: 无权限
+
+- **WHEN** 用户没有节点 patch 权限
+- **THEN** 系统 SHALL 返回 403，且不修改节点
+
+### Requirement: 节点驱逐
+
+系统 SHALL 支持 drain，并 MUST 默认跳过 DaemonSet 管理的 Pod 与镜像 Pod。对无控制器管理的 Pod 或使用 emptyDir 的 Pod，系统 MUST 默认阻止并要求显式确认。驱逐 MUST 受 PodDisruptionBudget 约束，失败项 SHALL 逐项返回原因，MUST NOT 因单个失败中断全部。
+
+#### Scenario: 正常驱逐
+
+- **WHEN** 用户对节点执行 drain 且所有 Pod 可安全驱逐
+- **THEN** 系统 SHALL 逐 Pod 创建 Eviction 请求，并返回成功数量与逐项结果
+
+#### Scenario: PDB 阻止
+
+- **WHEN** 某 Pod 的 PDB 不允许继续中断
+- **THEN** 该 Pod SHALL 标记为 blocked，其他 Pod SHALL 继续处理，响应 SHALL 包含 PDB 名称与允许中断数
+
+#### Scenario: 未受控 Pod
+
+- **WHEN** 节点上存在没有控制器 Owner 的 Pod 且未显式强制
+- **THEN** 系统 SHALL 阻止该 Pod 的驱逐并说明原因
+
+#### Scenario: 本地存储
+
+- **WHEN** Pod 使用 emptyDir 且未显式允许删除本地数据
+- **THEN** 系统 SHALL 阻止该 Pod 的驱逐并说明原因
+
+#### Scenario: 操作审计
+
+- **WHEN** drain 完成
+- **THEN** 系统 SHALL 写入一条审计记录，包含节点、成功/跳过/失败数量与操作者
+
+### Requirement: 引导式创建
+
+系统 SHALL 为高频资源类型提供结构化创建表单，至少覆盖 Deployment、StatefulSet、Service、ConfigMap、Secret、CronJob、Ingress 与 Namespace。表单 MUST 与 YAML 视图双向同步，且 YAML MUST 作为高级模式保留。未知类型 SHALL 回退到 YAML 模式。
+
+#### Scenario: 创建 Deployment
+
+- **WHEN** 用户选择「Web 服务」模板并填写名称、镜像与副本数
+- **THEN** 系统 SHALL 生成包含 selector、template、container、ports 与 resources 的合法 Deployment，并可在创建前预览 YAML
+
+#### Scenario: 创建 Secret
+
+- **WHEN** 用户以键值对输入 Secret 数据
+- **THEN** 系统 SHALL 生成 `stringData`，MUST NOT 要求用户输入 base64
+
+#### Scenario: 未知类型
+
+- **WHEN** 用户选择没有表单的资源类型
+- **THEN** 系统 SHALL 直接进入 YAML 模式，并说明该类型暂无表单
+
+#### Scenario: 表单与 YAML 切换
+
+- **WHEN** 用户在表单与 YAML 之间切换
+- **THEN** 已填写且可映射的字段 MUST 保留，无法映射的字段 SHALL 保留在 YAML 中并提示
+
+### Requirement: 创建校验与反馈
+
+创建前系统 SHALL 执行本地校验与服务端 dryRun；服务端拒绝时 MUST 保留用户输入并展示可执行的错误说明。创建成功后 SHALL 进入新对象详情。
+
+#### Scenario: 镜像为空
+
+- **WHEN** 用户未填写镜像就提交
+- **THEN** 本地校验 SHALL 阻止提交并聚焦到镜像字段
+
+#### Scenario: 服务端拒绝
+
+- **WHEN** apiserver 因名称冲突或准入策略拒绝创建
+- **THEN** 界面 SHALL 保留表单内容，展示错误码与说明
+
+#### Scenario: 创建成功
+
+- **WHEN** 创建成功
+- **THEN** 系统 SHALL 跳转到对象详情，并在返回列表时保留原筛选
+
+### Requirement: 模板与复制
+
+系统 SHALL 提供可运行的内置模板，并支持从现有工作负载复制为新对象。模板 MUST 通过同一表单模型生成，MUST NOT 维护独立的 YAML 文本副本。
+
+#### Scenario: 从现有对象复制
+
+- **WHEN** 用户在 Deployment 详情点击「复制为新」
+- **THEN** 创建表单 SHALL 预填镜像、端口、环境变量与资源限制，名称 MUST 为空并要求用户输入
+
+#### Scenario: 模板创建
+
+- **WHEN** 用户选择「Web 服务」模板
+- **THEN** 表单 SHALL 预填可运行的镜像、端口与副本数，用户只需确认名称与命名空间

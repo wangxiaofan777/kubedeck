@@ -27,23 +27,33 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
   })
 
   const logout = useCallback(async () => {
-    await api.logout()
+    try {
+      await api.logout()
+    } catch {
+      // 登出接口失败也要清理本地状态，避免用户卡在无法退出的页面。
+    }
     queryClient.clear()
     window.location.assign('/')
   }, [queryClient])
 
+  const me = meQuery.data
+  const meLoading = meQuery.isLoading
+  const meError = meQuery.error
+
   const value = useMemo<AuthContextValue>(
     () => ({
-      me: meQuery.data,
-      loading: meQuery.isLoading,
-      error: meQuery.error,
-      isDev: meQuery.data?.mode === 'dev',
+      me,
+      loading: meLoading,
+      error: meError,
+      isDev: me?.mode === 'dev',
       logout,
       refetch: () => {
         void meQuery.refetch()
       },
     }),
-    [meQuery, logout],
+    // meQuery 是稳定对象，但 refetch 依赖它；显式列出数据状态避免无谓重渲染。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [me, meLoading, meError, logout],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -174,20 +175,19 @@ func classifyProbeError(err error) (string, string) {
 	if err == nil {
 		return StatusUnreachable, "集群未返回可用响应"
 	}
+	// 原始错误只写日志：对外消息不能包含内部地址、DNS 名或证书细节。
+	slog.Warn("cluster probe failed", "err", err)
 	msg := err.Error()
-	if len(msg) > 300 {
-		msg = msg[:300]
-	}
 	switch {
 	case apierrors.IsUnauthorized(err), apierrors.IsForbidden(err):
-		return StatusDegraded, "凭据无效或权限不足：" + msg
+		return StatusDegraded, "凭据无效或权限不足"
 	}
 	var unknown x509.UnknownAuthorityError
 	var invalid x509.CertificateInvalidError
 	if errors.As(err, &unknown) || errors.As(err, &invalid) || strings.Contains(msg, "tls:") || strings.Contains(msg, "x509:") {
-		return StatusDegraded, "证书校验失败：" + msg
+		return StatusDegraded, "证书校验失败"
 	}
-	return StatusUnreachable, msg
+	return StatusUnreachable, "集群不可达"
 }
 
 // TransportFor 返回带用户身份的传输层；相同身份复用客户端，避免每请求重建 TLS 配置。
@@ -243,7 +243,10 @@ type DirectTransport struct {
 }
 
 func newDirectTransport(name, server string, cfg *rest.Config) (*DirectTransport, error) {
-	dyn, err := dynamic.NewForConfig(cfg)
+	// watch 是长连接，不能被 http.Client.Timeout 掐断；普通请求由 handler context 限时。
+	dynCfg := rest.CopyConfig(cfg)
+	dynCfg.Timeout = 0
+	dyn, err := dynamic.NewForConfig(dynCfg)
 	if err != nil {
 		return nil, fmt.Errorf("build dynamic client: %w", err)
 	}
@@ -280,13 +283,13 @@ func (t *DirectTransport) Info(ctx context.Context) ClusterInfo {
 	info := ClusterInfo{Name: t.name, Server: t.server}
 	if err := ctx.Err(); err != nil {
 		info.Status = StatusUnreachable
-		info.Message = err.Error()
+		info.Message = "请求已取消或超时"
 		return info
 	}
 	v, err := t.discovery.ServerVersion()
 	if err != nil {
 		info.Status = StatusUnreachable
-		info.Message = err.Error()
+		info.Message = "集群不可达"
 		return info
 	}
 	info.Version = v.GitVersion

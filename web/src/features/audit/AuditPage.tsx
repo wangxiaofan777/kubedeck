@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Alert,
+  App,
   Button,
   Card,
   Col,
@@ -11,14 +12,17 @@ import {
   Row,
   Select,
   Space,
-  Spin,
   Statistic,
   Table,
   Tag,
   Typography,
-  message,
 } from 'antd'
-import { CheckCircleOutlined, DownloadOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
+import {
+  CheckCircleOutlined,
+  DownloadOutlined,
+  SafetyCertificateOutlined,
+  SearchOutlined,
+} from '@ant-design/icons'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import dayjs, { type Dayjs } from 'dayjs'
@@ -29,40 +33,58 @@ import {
   type AuditEntry,
   type AuditStats,
 } from '../../lib/api'
+import PageHeader from '../../components/PageHeader'
+import StatusPill from '../../components/StatusPill'
+import { EmptyState, ErrorState, PageSkeleton } from '../../components/StateViews'
+import { formatDateTime } from '../../lib/format'
+import { AreaSpark } from '../../components/Charts'
+
+function download(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
 
 export default function AuditPage() {
   const { cluster } = useParams()
+  const { message } = App.useApp()
   const [range, setRange] = useState<[Dayjs, Dayjs]>()
   const [actor, setActor] = useState('')
   const [resource, setResource] = useState('')
   const [result, setResult] = useState<string>()
   const [offset, setOffset] = useState(0)
   const [statsDays, setStatsDays] = useState<7 | 30>(7)
+  const [exporting, setExporting] = useState<'csv' | 'json'>()
+  const [verifyState, setVerifyState] = useState<{
+    checked: number
+    intact: boolean
+    truncated?: boolean
+    brokenId?: number
+    brokenKind?: string
+  }>()
+  const [verifying, setVerifying] = useState(false)
   const limit = 50
 
-  const query = useQuery({
-    queryKey: [
-      'audit',
+  const filters = useMemo(
+    () => ({
       cluster,
-      range?.[0]?.toISOString(),
-      range?.[1]?.toISOString(),
-      actor,
-      resource,
+      from: range?.[0]?.toISOString(),
+      to: range?.[1]?.toISOString(),
+      actor: actor || undefined,
+      resource: resource || undefined,
       result,
-      offset,
-    ],
-    queryFn: ({ signal }) =>
-      api.auditLogs({
-        cluster,
-        from: range?.[0]?.toISOString(),
-        to: range?.[1]?.toISOString(),
-        actor: actor || undefined,
-        resource: resource || undefined,
-        result,
-        limit,
-        offset,
-        signal,
-      }),
+    }),
+    [cluster, range, actor, resource, result],
+  )
+
+  const query = useQuery({
+    queryKey: ['audit', filters, offset],
+    queryFn: ({ signal }) => api.auditLogs({ ...filters, limit, offset, signal }),
   })
 
   const statsQuery = useQuery({
@@ -75,22 +97,50 @@ export default function AuditPage() {
       }),
   })
 
-  const verify = useQuery({
-    queryKey: ['audit-verify'],
-    queryFn: () => api.verifyAudit(),
-    enabled: false,
-  })
+  const runVerify = async () => {
+    setVerifying(true)
+    try {
+      const value = await api.verifyAudit()
+      setVerifyState(value)
+      if (value.intact) {
+        message.success(
+          `校验通过，共 ${value.checked} 条${value.truncated ? '（起点已按保留期截断）' : ''}`,
+        )
+      } else {
+        message.error(`校验失败：第 ${value.brokenId} 条记录（${value.brokenKind}）断裂`)
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '校验失败')
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  const runExport = async (format: 'csv' | 'json') => {
+    setExporting(format)
+    try {
+      const { blob, count, truncated } = await api.exportAudit(format, filters)
+      download(blob, `kubedeck-audit-${dayjs().format('YYYYMMDD-HHmmss')}.${format}`)
+      message.success(
+        `已导出 ${count} 条${truncated ? '（达到单次上限，请缩小时间范围）' : ''}`,
+      )
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '导出失败')
+    } finally {
+      setExporting(undefined)
+    }
+  }
 
   const columns = [
     {
       title: '时间',
       dataIndex: 'occurredAt',
-      width: 190,
-      render: (value: string) => new Date(value).toLocaleString(),
+      width: 160,
+      render: (value: string) => formatDateTime(value),
     },
     { title: '操作者', dataIndex: 'actorSubject', width: 150, ellipsis: true },
     { title: '集群', dataIndex: 'clusterName', width: 110 },
-    { title: '动作', dataIndex: 'verb', width: 110 },
+    { title: '动作', dataIndex: 'verb', width: 120 },
     {
       title: '资源',
       key: 'target',
@@ -103,16 +153,14 @@ export default function AuditPage() {
       key: 'result',
       width: 120,
       render: (_: unknown, entry: AuditEntry) => (
-        <Tag color={entry.result === 'success' ? 'green' : 'red'}>
-          {entry.result} {entry.resultCode}
-        </Tag>
+        <StatusPill value={`${entry.result} ${entry.resultCode}`} />
       ),
     },
-    { title: '耗时', dataIndex: 'latencyMs', width: 80, render: (v: number) => `${v}ms` },
+    { title: '耗时', dataIndex: 'latencyMs', width: 80, render: (value: number) => `${value}ms` },
     {
       title: '请求号',
       dataIndex: 'requestId',
-      width: 190,
+      width: 180,
       ellipsis: true,
       render: (value: string) => <Typography.Text copyable>{value}</Typography.Text>,
     },
@@ -120,121 +168,55 @@ export default function AuditPage() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 12 }} align="center" wrap>
-        <Typography.Title level={5} style={{ margin: 0 }}>
-          审计日志
-        </Typography.Title>
-        {cluster && <Tag>{cluster}</Tag>}
-        <div style={{ flex: 1 }} />
-        <DatePicker.RangePicker
-          showTime
-          value={range}
-          onChange={(value) => {
-            setOffset(0)
-            setRange(value?.[0] && value[1] ? [value[0], value[1]] : undefined)
-          }}
-        />
-        <Input
-          allowClear
-          placeholder="操作者"
-          value={actor}
-          onChange={(event) => {
-            setOffset(0)
-            setActor(event.target.value)
-          }}
-          style={{ width: 160 }}
-          aria-label="按操作者过滤"
-        />
-        <Input
-          allowClear
-          placeholder="资源类型"
-          value={resource}
-          onChange={(event) => {
-            setOffset(0)
-            setResource(event.target.value)
-          }}
-          style={{ width: 150 }}
-          aria-label="按资源过滤"
-        />
-        <Select
-          allowClear
-          placeholder="结果"
-          value={result}
-          onChange={(value) => {
-            setOffset(0)
-            setResult(value)
-          }}
-          style={{ width: 120 }}
-          options={[
-            { value: 'success', label: '成功' },
-            { value: 'failure', label: '失败' },
-          ]}
-        />
-        <Button
-          icon={<SafetyCertificateOutlined />}
-          loading={verify.isFetching}
-          onClick={async () => {
-            const data = await verify.refetch()
-            const value = data.data
-            if (!value) return
-            if (value.intact) {
-              message.success(`校验通过，共 ${value.checked} 条记录`)
-            } else {
-              message.error(`校验失败：第 ${value.brokenId} 条记录（${value.brokenKind}）断裂`)
-            }
-          }}
-        >
-          校验完整性
-        </Button>
-        <Button
-          icon={<DownloadOutlined />}
-          onClick={() => {
-            window.location.assign(
-              api.auditExportURL('csv', {
-                cluster,
-                from: range?.[0]?.toISOString(),
-                to: range?.[1]?.toISOString(),
-                actor: actor || undefined,
-                resource: resource || undefined,
-                result,
-              }),
-            )
-          }}
-        >
-          导出 CSV
-        </Button>
-        <Button
-          icon={<DownloadOutlined />}
-          onClick={() => {
-            window.location.assign(
-              api.auditExportURL('json', {
-                cluster,
-                from: range?.[0]?.toISOString(),
-                to: range?.[1]?.toISOString(),
-                actor: actor || undefined,
-                resource: resource || undefined,
-                result,
-              }),
-            )
-          }}
-        >
-          导出 JSON
-        </Button>
-      </Space>
+      <PageHeader
+        crumbs={[
+          { label: '集群', to: `/clusters/${encodeURIComponent(cluster ?? '')}/overview` },
+          { label: '审计日志' },
+        ]}
+        title="审计日志"
+        subtitle={<span className="kd-muted">所有写操作与敏感读都可追溯</span>}
+        tags={cluster ? <Tag>{cluster}</Tag> : undefined}
+        actions={
+          <Space>
+            <Button
+              icon={<SafetyCertificateOutlined />}
+              loading={verifying}
+              onClick={() => void runVerify()}
+            >
+              校验完整性
+            </Button>
+            <Button
+              icon={<DownloadOutlined />}
+              loading={exporting === 'csv'}
+              onClick={() => void runExport('csv')}
+            >
+              导出 CSV
+            </Button>
+            <Button
+              icon={<DownloadOutlined />}
+              loading={exporting === 'json'}
+              onClick={() => void runExport('json')}
+            >
+              导出 JSON
+            </Button>
+          </Space>
+        }
+      />
 
-      {verify.data && (
+      {verifyState && (
         <Alert
-          type={verify.data.intact ? 'success' : 'error'}
+          type={verifyState.intact ? 'success' : 'error'}
           showIcon
           icon={<CheckCircleOutlined />}
-          style={{ marginBottom: 12 }}
+          style={{ marginBottom: 14 }}
           message={
-            verify.data.intact
-              ? `哈希链完整（${verify.data.checked} 条）`
-              : `哈希链在记录 ${verify.data.brokenId} 处断裂（${verify.data.brokenKind}）`
+            verifyState.intact
+              ? `哈希链完整（${verifyState.checked} 条${verifyState.truncated ? '，起点已按保留期截断' : ''}）`
+              : `哈希链在记录 ${verifyState.brokenId} 处断裂（${verifyState.brokenKind}）`
           }
         />
       )}
+
       <AuditStatsCard
         days={statsDays}
         onDaysChange={setStatsDays}
@@ -244,29 +226,100 @@ export default function AuditPage() {
         onRetry={() => void statsQuery.refetch()}
       />
 
-      {query.data?.retentionWarning && (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message={query.data.retentionWarning}
-        />
-      )}
+      <Card className="kd-table-card" styles={{ body: { padding: 0 } }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            flexWrap: 'wrap',
+            padding: '12px 16px',
+            borderBottom: '1px solid #f1f5f9',
+          }}
+        >
+          <DatePicker.RangePicker
+            showTime
+            value={range}
+            onChange={(value) => {
+              setOffset(0)
+              setRange(value?.[0] && value[1] ? [value[0], value[1]] : undefined)
+            }}
+          />
+          <Input
+            allowClear
+            prefix={<SearchOutlined />}
+            placeholder="操作者"
+            value={actor}
+            onChange={(event) => {
+              setOffset(0)
+              setActor(event.target.value)
+            }}
+            style={{ width: 160 }}
+            aria-label="按操作者过滤"
+          />
+          <Input
+            allowClear
+            placeholder="资源类型"
+            value={resource}
+            onChange={(event) => {
+              setOffset(0)
+              setResource(event.target.value)
+            }}
+            style={{ width: 150 }}
+            aria-label="按资源过滤"
+          />
+          <Select
+            allowClear
+            placeholder="结果"
+            value={result}
+            onChange={(value) => {
+              setOffset(0)
+              setResult(value)
+            }}
+            style={{ width: 120 }}
+            options={[
+              { value: 'success', label: '成功' },
+              { value: 'failure', label: '失败' },
+            ]}
+          />
+        </div>
 
-      <Table<AuditEntry>
-        size="small"
-        rowKey="id"
-        loading={query.isFetching}
-        dataSource={query.data?.items ?? []}
-        columns={columns}
-        pagination={{
-          total: query.data?.total ?? 0,
-          pageSize: limit,
-          current: Math.floor(offset / limit) + 1,
-          showSizeChanger: false,
-          onChange: (page) => setOffset((page - 1) * limit),
-        }}
-      />
+        {query.data?.retentionWarning && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ margin: 12 }}
+            message={query.data.retentionWarning}
+          />
+        )}
+
+        {query.isLoading ? (
+          <div style={{ padding: 16 }}>
+            <PageSkeleton rows={8} />
+          </div>
+        ) : query.isError ? (
+          <div style={{ padding: 16 }}>
+            <ErrorState error={query.error} onRetry={() => void query.refetch()} />
+          </div>
+        ) : (query.data?.items.length ?? 0) === 0 ? (
+          <EmptyState description="该条件下没有审计记录" />
+        ) : (
+          <Table<AuditEntry>
+            size="small"
+            rowKey="id"
+            loading={query.isFetching && !query.isLoading}
+            dataSource={query.data?.items ?? []}
+            columns={columns}
+            pagination={{
+              total: query.data?.total ?? 0,
+              pageSize: limit,
+              current: Math.floor(offset / limit) + 1,
+              showSizeChanger: false,
+              onChange: (page) => setOffset((page - 1) * limit),
+            }}
+          />
+        )}
+      </Card>
     </div>
   )
 }
@@ -296,22 +349,14 @@ const DAY_COLUMNS = [
   },
 ]
 
-/** AuditStatsCard 展示聚合统计，失败或为空时不影响下方审计列表。 */
-function AuditStatsCard({
-  days,
-  onDaysChange,
-  loading,
-  error,
-  stats,
-  onRetry,
-}: AuditStatsCardProps) {
+function AuditStatsCard({ days, onDaysChange, loading, error, stats, onRetry }: AuditStatsCardProps) {
   const failureRate = stats && stats.total > 0 ? Math.round((stats.failed / stats.total) * 100) : 0
 
   return (
     <Card
       size="small"
       title="审计概览"
-      style={{ marginBottom: 12 }}
+      style={{ marginBottom: 14 }}
       extra={
         <Select<7 | 30>
           aria-label="统计时间范围"
@@ -326,25 +371,13 @@ function AuditStatsCard({
       }
     >
       {loading ? (
-        <div style={{ padding: 24, textAlign: 'center' }}>
-          <Spin />
-        </div>
+        <PageSkeleton rows={3} />
       ) : error ? (
-        <Alert
-          type="warning"
-          showIcon
-          message="审计统计加载失败"
-          description={error instanceof Error ? error.message : undefined}
-          action={
-            <Button size="small" onClick={onRetry}>
-              重试
-            </Button>
-          }
-        />
+        <ErrorState error={error} title="审计统计加载失败" onRetry={onRetry} />
       ) : !stats ? null : stats.total === 0 ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该时间范围内没有审计记录" />
       ) : (
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space direction="vertical" size={14} style={{ width: '100%' }}>
           <Row gutter={16}>
             <Col xs={12} md={6}>
               <Statistic title="总数" value={stats.total} />
@@ -356,18 +389,31 @@ function AuditStatsCard({
               <Statistic
                 title="失败"
                 value={stats.failed}
-                valueStyle={{ color: stats.failed > 0 ? '#ff4d4f' : undefined }}
+                valueStyle={{ color: stats.failed > 0 ? '#b91c1c' : undefined }}
               />
             </Col>
             <Col xs={12} md={6}>
-              <Statistic title="失败率" value={failureRate} suffix="%" />
+              <div className="kd-chart-label">失败率</div>
+              <div style={{ fontSize: 22, fontWeight: 650 }}>{failureRate}%</div>
               <Progress
                 percent={failureRate}
                 size="small"
                 status={failureRate > 0 ? 'exception' : 'success'}
+                showInfo={false}
               />
             </Col>
           </Row>
+          <div>
+            <div className="kd-chart-label" style={{ marginBottom: 4 }}>
+              按天趋势
+            </div>
+            <AreaSpark
+              values={stats.byDay.map((day) => day.total)}
+              color="#2563eb"
+              height={64}
+              label="审计记录趋势"
+            />
+          </div>
           <Row gutter={[16, 16]}>
             <Col xs={24} md={12} lg={6}>
               <Typography.Text strong>按天</Typography.Text>

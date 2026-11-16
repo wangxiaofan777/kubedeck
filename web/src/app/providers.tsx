@@ -2,8 +2,13 @@ import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App as AntApp, ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
+import dayjs from 'dayjs'
+import 'dayjs/locale/zh-cn'
 import { ApiError } from '../lib/api'
+import { kubedeckTheme } from '../theme'
 import AuthProvider from './AuthProvider'
+
+dayjs.locale('zh-cn')
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,7 +26,7 @@ const queryClient = new QueryClient({
 
 export default function AppProviders({ children }: { children: ReactNode }) {
   return (
-    <ConfigProvider locale={zhCN}>
+    <ConfigProvider locale={zhCN} theme={kubedeckTheme}>
       <AntApp>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>{children}</AuthProvider>

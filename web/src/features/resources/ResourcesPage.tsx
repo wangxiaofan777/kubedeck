@@ -1,29 +1,34 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
+  App,
   Button,
-  Empty,
+  Card,
+  Drawer,
   Input,
-  Modal,
   Result,
   Select,
   Space,
-  Spin,
+  Table,
   Tag,
   Typography,
-  message,
 } from 'antd'
-import { DeleteOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
+import {
+  DeleteOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  SearchOutlined,
+} from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, type ResourceItem } from '../../lib/api'
 import { useResourceRealtime } from '../../lib/useRealtime'
-import ErrorAlert from '../../components/ErrorAlert'
+import PageHeader from '../../components/PageHeader'
+import { EmptyState, ErrorState, PageSkeleton } from '../../components/StateViews'
 import ResourceTable, { itemKey } from '../../components/ResourceTable'
 import { useCan } from '../auth/useCan'
 import { useResourceList } from './useResourceList'
-import { isCreatable, isCrashLoop, resolveType, RESOURCE_TYPES } from './resourceTypes'
-import ResourceCreateModal from './ResourceCreateModal'
+import { isCreatable, isCrashLoop, resolveType } from './resourceTypes'
 
 const PAGE_LIMIT = 500
 
@@ -32,29 +37,30 @@ export default function ResourcesPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { message } = App.useApp()
 
-  const type = resolveType(typeKey) ?? RESOURCE_TYPES[0]
+  const type = resolveType(typeKey)
   const namespace = searchParams.get('namespace') ?? ''
   const continueToken = searchParams.get('continue') ?? ''
   const urlSearch = searchParams.get('search') ?? ''
   const labelSelector = searchParams.get('label') ?? ''
+  const urlPodFilter = searchParams.get('pods') === 'crashloop' ? 'crashloop' : 'all'
 
   const [search, setSearch] = useState(urlSearch)
   const [labelInput, setLabelInput] = useState(labelSelector)
-  const [podFilter, setPodFilter] = useState<'all' | 'crashloop'>('all')
+  const [podFilter, setPodFilter] = useState<'all' | 'crashloop'>(urlPodFilter)
   const [selectedKeys, setSelectedKeys] = useState<string[]>([])
   const [batchOpen, setBatchOpen] = useState(false)
   const [batchRunning, setBatchRunning] = useState(false)
-  const [createOpen, setCreateOpen] = useState(false)
 
   useEffect(() => setSearch(urlSearch), [urlSearch])
   useEffect(() => setLabelInput(labelSelector), [labelSelector])
+  useEffect(() => setPodFilter(urlPodFilter), [urlPodFilter])
   useEffect(() => {
     setSelectedKeys([])
-    setPodFilter('all')
-  }, [cluster, type.key, namespace])
+  }, [cluster, typeKey, namespace])
 
-  const listQuery = useResourceList(cluster, type, {
+  const listQuery = useResourceList(cluster, type ?? { key: '', label: '', kind: '', group: '集群', gvr: { group: '', version: 'v1', resource: 'pods' }, namespaced: true }, {
     namespace,
     continueToken,
     labelSelector,
@@ -65,7 +71,7 @@ export default function ResourcesPage() {
     () => [
       'resources',
       cluster,
-      type.key,
+      type?.key,
       namespace,
       labelSelector,
       '',
@@ -74,43 +80,43 @@ export default function ResourcesPage() {
       '',
       '',
     ],
-    [cluster, type.key, namespace, labelSelector, continueToken],
+    [cluster, type?.key, namespace, labelSelector, continueToken],
   )
 
   useResourceRealtime({
     cluster,
-    gvr: type.gvr,
+    gvr: type?.gvr ?? { group: '', version: 'v1', resource: 'pods' },
     namespace,
     queryKey,
     resourceVersion: listQuery.data?.resourceVersion,
-    enabled: !!cluster && !continueToken,
+    enabled: !!cluster && !!type && !continueToken,
   })
 
-  const creatable = isCreatable(type)
-  const createScopeReady = type.namespaced ? !!namespace : true
+  const creatable = type ? isCreatable(type) : false
+  const createScopeReady = type?.namespaced ? !!namespace : true
   const createCan = useCan({
     cluster,
-    gvr: type.gvr,
-    namespace: type.namespaced ? namespace : undefined,
+    gvr: type?.gvr ?? { group: '', version: 'v1', resource: 'pods' },
+    namespace: type?.namespaced ? namespace : undefined,
     verb: 'create',
-    enabled: creatable && createScopeReady,
+    enabled: !!type && creatable && createScopeReady,
   })
 
   const deleteCan = useCan({
     cluster,
-    gvr: type.gvr,
+    gvr: type?.gvr ?? { group: '', version: 'v1', resource: 'pods' },
     namespace,
-    verb: type.key === 'namespaces' ? 'delete' : 'deletecollection',
-    enabled: type.key !== 'namespaces',
+    verb: type?.key === 'namespaces' ? 'delete' : 'deletecollection',
+    enabled: !!type && type.key !== 'namespaces',
   })
 
   const items = useMemo(() => {
     let all = listQuery.data?.items ?? []
-    const q = search.trim().toLowerCase()
-    if (q) all = all.filter((item) => item.metadata.name.toLowerCase().includes(q))
-    if (type.key === 'pods' && podFilter === 'crashloop') all = all.filter(isCrashLoop)
+    const keyword = search.trim().toLowerCase()
+    if (keyword) all = all.filter((item) => item.metadata.name.toLowerCase().includes(keyword))
+    if (type?.key === 'pods' && podFilter === 'crashloop') all = all.filter(isCrashLoop)
     return all
-  }, [listQuery.data, search, type.key, podFilter])
+  }, [listQuery.data, search, type?.key, podFilter])
 
   const updateSearch = (next: Record<string, string | undefined>) => {
     const params = new URLSearchParams(searchParams)
@@ -123,6 +129,7 @@ export default function ResourcesPage() {
   }
 
   const openDetail = (item: ResourceItem) => {
+    if (!type) return
     const ns = item.metadata.namespace ?? '_'
     const suffix = item.metadata.namespace
       ? `?namespace=${encodeURIComponent(item.metadata.namespace)}`
@@ -133,67 +140,112 @@ export default function ResourcesPage() {
   }
 
   const runBatchDelete = async () => {
-    if (!cluster) return
+    if (!cluster || !type) return
     setBatchRunning(true)
-    try {
-      const result = await api.batchRemove({
-        cluster,
-        gvr: type.gvr,
-        namespace,
-        names: selectedKeys.map((key) => {
-          const item = listQuery.data?.items.find((i) => itemKey(i) === key)
-          return item?.metadata.name ?? key
+    const targets = items.filter((item) => selectedKeys.includes(itemKey(item)))
+    const results = await Promise.allSettled(
+      targets.map((item) =>
+        api.remove({
+          cluster,
+          gvr: type.gvr,
+          namespace: item.metadata.namespace,
+          name: item.metadata.name,
+          propagationPolicy: 'Background',
         }),
-        propagationPolicy: 'Background',
-      })
-      if (result.failed > 0) {
-        message.warning(`已完成 ${result.succeeded} 项，失败 ${result.failed} 项`)
-      } else {
-        message.success(`已删除 ${result.succeeded} 项`)
-      }
-      setSelectedKeys([])
-      setBatchOpen(false)
-      await queryClient.invalidateQueries({ queryKey })
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : '批量删除失败')
-    } finally {
-      setBatchRunning(false)
+      ),
+    )
+    const failed = results.filter((result) => result.status === 'rejected').length
+    const succeeded = results.length - failed
+    if (failed > 0) {
+      message.warning(`已删除 ${succeeded} 项，失败 ${failed} 项`)
+    } else {
+      message.success(`已删除 ${succeeded} 项`)
     }
+    setBatchRunning(false)
+    setBatchOpen(false)
+    setSelectedKeys([])
+    await queryClient.invalidateQueries({ queryKey })
+  }
+
+  if (!type) {
+    return (
+      <Result
+        status="404"
+        title="未知的资源类型"
+        subTitle={`地址中的类型 "${typeKey}" 不在导航中。`}
+        extra={<Button onClick={() => navigate(-1)}>返回</Button>}
+      />
+    )
   }
 
   if (listQuery.error instanceof ApiError && listQuery.error.code === 'FORBIDDEN') {
     return (
-      <Result status="403" title="无访问权限" subTitle="当前账号无权访问该命名空间或资源类型。" />
+      <Result
+        status="403"
+        title="无访问权限"
+        subTitle="当前账号无权访问该命名空间或资源类型。"
+        extra={
+          <Button onClick={() => navigate(`/clusters/${encodeURIComponent(cluster ?? '')}/overview`)}>
+            返回总览
+          </Button>
+        }
+      />
     )
   }
 
   const filterActive = !!(search || labelSelector || podFilter !== 'all')
-  const selectedItems = (listQuery.data?.items ?? []).filter((item) =>
-    selectedKeys.includes(itemKey(item)),
-  )
+  const selectedItems = items.filter((item) => selectedKeys.includes(itemKey(item)))
 
   return (
     <div>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-          marginBottom: 12,
-          flexWrap: 'wrap',
-        }}
-      >
-        <Space size={8}>
-          <Typography.Title level={5} style={{ margin: 0 }}>
-            {type.label}
-          </Typography.Title>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+      <PageHeader
+        crumbs={[
+          { label: '集群', to: `/clusters/${encodeURIComponent(cluster ?? '')}/overview` },
+          ...(namespace ? [{ label: namespace }] : []),
+          { label: type.label },
+        ]}
+        title={type.label}
+        subtitle={
+          <span className="kd-muted">
             {items.length} 项
-          </Typography.Text>
-          {namespace && <Tag>{namespace}</Tag>}
-        </Space>
-        <Space wrap>
+            {continueToken ? ' · 分页视图' : ''}
+          </span>
+        }
+        tags={namespace ? <Tag>{namespace}</Tag> : <Tag>全部命名空间</Tag>}
+        actions={
+          <Space wrap>
+            {creatable && createScopeReady && (createCan.loading || createCan.allowed) && (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                disabled={createCan.loading}
+                onClick={() =>
+                  navigate(
+                    `/clusters/${encodeURIComponent(cluster!)}/new/${type.key}${namespace ? `?namespace=${encodeURIComponent(namespace)}` : ''}`,
+                  )
+                }
+              >
+                新建
+              </Button>
+            )}
+            <Button icon={<ReloadOutlined />} onClick={() => void listQuery.refetch()}>
+              刷新
+            </Button>
+          </Space>
+        }
+      />
+
+      <Card className="kd-table-card" styles={{ body: { padding: 0 } }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            flexWrap: 'wrap',
+            padding: '12px 16px',
+            borderBottom: '1px solid #f1f5f9',
+          }}
+        >
           <Input
             allowClear
             aria-label="按名称过滤"
@@ -219,63 +271,20 @@ export default function ResourcesPage() {
             <Select
               aria-label="状态过滤"
               value={podFilter}
-              onChange={setPodFilter}
-              style={{ width: 150 }}
+              onChange={(next) => {
+                setPodFilter(next)
+                updateSearch({ pods: next === 'crashloop' ? 'crashloop' : undefined })
+              }}
+              style={{ width: 160 }}
               options={[
                 { value: 'all', label: '全部状态' },
                 { value: 'crashloop', label: 'CrashLoopBackOff' },
               ]}
             />
           )}
-          {creatable && createScopeReady && (createCan.loading || createCan.allowed) && (
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              disabled={createCan.loading}
-              onClick={() => setCreateOpen(true)}
-            >
-              新建
-            </Button>
-          )}
-          {creatable && type.namespaced && !namespace && (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              选择命名空间后可新建
-            </Typography.Text>
-          )}
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={() => {
-              void listQuery.refetch()
-            }}
-          >
-            刷新
-          </Button>
-          {selectedKeys.length > 0 && (deleteCan.loading || deleteCan.allowed) && (
-            <Button
-              danger
-              icon={<DeleteOutlined />}
-              disabled={deleteCan.loading}
-              onClick={() => setBatchOpen(true)}
-            >
-              删除所选（{selectedKeys.length}）
-            </Button>
-          )}
-        </Space>
-      </div>
-
-      <ErrorAlert error={listQuery.error} />
-
-      {listQuery.isLoading ? (
-        <div style={{ padding: 64, textAlign: 'center' }}>
-          <Spin />
-        </div>
-      ) : items.length === 0 ? (
-        <Empty
-          description={filterActive ? '没有匹配的资源' : '该视图暂无资源'}
-          style={{ padding: 48 }}
-        >
           {filterActive && (
             <Button
+              type="link"
               onClick={() => {
                 setSearch('')
                 setPodFilter('all')
@@ -283,6 +292,7 @@ export default function ResourcesPage() {
                 const params = new URLSearchParams(searchParams)
                 params.delete('search')
                 params.delete('label')
+                params.delete('pods')
                 params.delete('continue')
                 setSearchParams(params, { replace: true })
               }}
@@ -290,91 +300,141 @@ export default function ResourcesPage() {
               清除筛选
             </Button>
           )}
-        </Empty>
-      ) : (
-        <>
+        </div>
+
+        {listQuery.isLoading ? (
+          <div style={{ padding: 16 }}>
+            <PageSkeleton rows={8} />
+          </div>
+        ) : listQuery.isError ? (
+          <div style={{ padding: 16 }}>
+            <ErrorState error={listQuery.error} onRetry={() => void listQuery.refetch()} />
+          </div>
+        ) : items.length === 0 ? (
+          <EmptyState
+            description={filterActive ? '没有匹配的资源' : '该视图暂无资源'}
+            action={
+              creatable && createScopeReady && createCan.allowed ? (
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={() =>
+                    navigate(
+                      `/clusters/${encodeURIComponent(cluster!)}/new/${type.key}${namespace ? `?namespace=${encodeURIComponent(namespace)}` : ''}`,
+                    )
+                  }
+                >
+                  新建 {type.label}
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : (
           <ResourceTable
             type={type}
             items={items}
-            loading={listQuery.isFetching}
+            loading={listQuery.isFetching && !listQuery.isLoading}
             namespace={namespace}
             selectedKeys={selectedKeys}
             onSelectionChange={setSelectedKeys}
             onSelect={openDetail}
           />
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              alignItems: 'center',
-              gap: 8,
-              marginTop: 12,
-            }}
-          >
-            {continueToken && (
-              <Button onClick={() => updateSearch({ continue: undefined })}>回到第一页</Button>
-            )}
-            {listQuery.data?.continue && (
-              <Button
-                type="primary"
-                onClick={() => updateSearch({ continue: listQuery.data?.continue })}
-              >
-                下一页
-              </Button>
-            )}
-          </div>
-        </>
+        )}
+
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            gap: 8,
+            padding: 12,
+          }}
+        >
+          {continueToken && (
+            <Button onClick={() => updateSearch({ continue: undefined })}>回到第一页</Button>
+          )}
+          {listQuery.data?.continue && (
+            <Button
+              type="primary"
+              onClick={() => updateSearch({ continue: listQuery.data?.continue })}
+            >
+              下一页
+            </Button>
+          )}
+        </div>
+      </Card>
+
+      {selectedItems.length > 0 && (
+        <div className="kd-action-bar">
+          <span style={{ fontWeight: 550 }}>已选 {selectedItems.length} 项</span>
+          <Button type="text" size="small" onClick={() => setSelectedKeys([])}>
+            清除选择
+          </Button>
+          <div style={{ flex: 1 }} />
+          {(deleteCan.loading || deleteCan.allowed) && (
+            <Button
+              danger
+              type="primary"
+              icon={<DeleteOutlined />}
+              disabled={deleteCan.loading}
+              onClick={() => setBatchOpen(true)}
+            >
+              删除所选
+            </Button>
+          )}
+        </div>
       )}
 
-      <Modal
-        open={batchOpen}
+      <Drawer
         title={`删除 ${selectedItems.length} 个 ${type.label}`}
-        okText="确认删除"
-        okButtonProps={{ danger: true, loading: batchRunning }}
-        onOk={() => void runBatchDelete()}
-        onCancel={() => setBatchOpen(false)}
+        width={560}
+        open={batchOpen}
+        onClose={() => setBatchOpen(false)}
+        extra={
+          <Button danger type="primary" loading={batchRunning} onClick={() => void runBatchDelete()}>
+            确认删除
+          </Button>
+        }
       >
         <Alert
           type="warning"
           showIcon
-          style={{ marginBottom: 12 }}
-          message="删除后无法撤销，请确认以下对象"
+          style={{ marginBottom: 14 }}
+          message="删除后无法撤销"
+          description="每个对象会携带自己的命名空间提交；结果逐项返回。"
         />
-        <ul style={{ maxHeight: 240, overflow: 'auto', paddingLeft: 20 }}>
-          {selectedItems.map((item) => (
-            <li key={itemKey(item)}>
-              {item.metadata.namespace ? `${item.metadata.namespace}/` : ''}
-              {item.metadata.name}
-            </li>
-          ))}
-        </ul>
-      </Modal>
-
-      {cluster && (
-        <ResourceCreateModal
-          open={createOpen}
-          cluster={cluster}
-          type={type}
-          namespace={namespace}
-          onCancel={() => setCreateOpen(false)}
-          onCreated={(item, pageKey) => {
-            setCreateOpen(false)
-            void queryClient.invalidateQueries({ queryKey: ['resources'] })
-            if (!pageKey || pageKey === type.key) {
-              openDetail(item)
-              return
-            }
-            // YAML 创建了当前页面之外的类型：跳到该类型的内置页面。
-            const ns = item.metadata.namespace ?? '_'
-            const suffix = item.metadata.namespace
-              ? `?namespace=${encodeURIComponent(item.metadata.namespace)}`
-              : ''
-            navigate(
-              `/clusters/${encodeURIComponent(cluster!)}/${pageKey}/${encodeURIComponent(ns)}/${encodeURIComponent(item.metadata.name)}${suffix}`,
-            )
-          }}
+        <Table
+          size="small"
+          rowKey={itemKey}
+          pagination={false}
+          dataSource={selectedItems}
+          scroll={{ y: 320 }}
+          columns={[
+            {
+              title: '命名空间',
+              dataIndex: ['metadata', 'namespace'],
+              width: 150,
+              render: (value: string) => value ?? <span className="kd-muted">集群级</span>,
+            },
+            {
+              title: '名称',
+              dataIndex: ['metadata', 'name'],
+              render: (value: string) => <span className="kd-mono">{value}</span>,
+            },
+          ]}
         />
-      )}
+        <Typography.Paragraph className="kd-muted" style={{ marginTop: 12, fontSize: 12 }}>
+          当前视图：{namespace || '全部命名空间'} · {type.label}
+        </Typography.Paragraph>
+        {selectedItems.length > 20 && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: 12 }}
+            message="对象较多时会逐个提交，请耐心等待结果"
+          />
+        )}
+      </Drawer>
     </div>
   )
 }

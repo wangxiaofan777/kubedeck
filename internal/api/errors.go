@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 
@@ -28,6 +29,7 @@ const (
 	CodeRateLimited        ErrorCode = "RATE_LIMITED"
 	CodePayloadTooLarge    ErrorCode = "PAYLOAD_TOO_LARGE"
 	CodeUnsupported        ErrorCode = "UNSUPPORTED"
+	CodeServiceUnavailable ErrorCode = "SERVICE_UNAVAILABLE"
 	CodeInternal           ErrorCode = "INTERNAL"
 )
 
@@ -48,8 +50,8 @@ func (c ErrorCode) HTTPStatus() int {
 		return http.StatusUnprocessableEntity
 	case CodeClusterUnreachable:
 		return http.StatusServiceUnavailable
-	case CodeClusterDegraded:
-		// 集群降级时无法完成本次读取，按依赖不可用处理。
+	case CodeClusterDegraded, CodeServiceUnavailable:
+		// 依赖不可用时按 503 处理。
 		return http.StatusServiceUnavailable
 	case CodeUpstreamTimeout:
 		return http.StatusGatewayTimeout
@@ -78,8 +80,8 @@ func NewError(code ErrorCode, message string) *Error {
 	return &Error{Code: code, Message: message}
 }
 
-// FromUpstream 把 apiserver 的 Status 映射为稳定错误码；未知原因归为 INTERNAL，
-// 原始 message 保留在 details.upstream 供排查。
+// FromUpstream 把 apiserver 的 Status 映射为稳定错误码；未知原因归为 INTERNAL。
+// 原始错误只写服务端日志，不返回客户端，避免泄露内部地址与 RBAC 细节。
 func FromUpstream(err error) *Error {
 	if err == nil {
 		return NewError(CodeInternal, "nil upstream error")
@@ -121,11 +123,11 @@ func FromUpstream(err error) *Error {
 		}
 	}
 
+	slog.Warn("upstream request failed", "code", code, "err", err)
 	e := NewError(code, userMessage(code))
-	e.Details = map[string]any{"upstream": err.Error()}
 	if status, ok := err.(apierrors.APIStatus); ok {
 		if s := status.Status(); s.Reason != "" {
-			e.Details["upstreamReason"] = string(s.Reason)
+			e.Details = map[string]any{"upstreamReason": string(s.Reason)}
 		}
 	}
 	return e

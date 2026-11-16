@@ -252,7 +252,17 @@ func (h *handlers) requireIdentity(next http.Handler) http.Handler {
 		}
 		sid := sessionID(r)
 		if sess, ok := h.authSvc.Session(sid); ok {
-			next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), sess.Identity)))
+			id, err := h.refreshIdentity(r.Context(), sess.Identity)
+			if err != nil {
+				if errors.Is(err, errUserDisabled) || errors.Is(err, domain.ErrNotFound) {
+					h.authSvc.Logout(sid)
+					WriteError(r.Context(), w, NewError(CodeUnauthenticated, "账号已被禁用或不存在，请重新登录"))
+					return
+				}
+				WriteError(r.Context(), w, NewError(CodeServiceUnavailable, "无法校验账号状态，请稍后重试"))
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), id)))
 			return
 		}
 		if h.authSvc.DevMode() {
@@ -266,6 +276,40 @@ func (h *handlers) requireIdentity(next http.Handler) http.Handler {
 		}
 		WriteError(r.Context(), w, NewError(CodeUnauthenticated, "登录状态无效或已过期"))
 	})
+}
+
+var errUserDisabled = errors.New("api: user disabled")
+
+// identityRefresher 由支持按 ID 读取用户的仓储实现；测试替身可不实现。
+type identityRefresher interface {
+	UserByID(ctx context.Context, id int64) (domain.User, error)
+}
+
+// refreshIdentity 在每次请求时刷新启用状态与平台管理员标记，
+// 避免取消管理员或禁用账号后仍能凭旧会话操作。
+func (h *handlers) refreshIdentity(ctx context.Context, id auth.Identity) (auth.Identity, error) {
+	if h.authStore == nil || id.UserID == 0 {
+		return id, nil
+	}
+	rs, ok := h.authStore.(identityRefresher)
+	if !ok {
+		return id, nil
+	}
+	user, err := rs.UserByID(ctx, id.UserID)
+	if err != nil {
+		return id, err
+	}
+	if user.Status != "active" {
+		return id, errUserDisabled
+	}
+	id.PlatformAdmin = user.IsPlatformAdmin
+	if user.Email != "" {
+		id.Email = user.Email
+	}
+	if user.DisplayName != "" {
+		id.DisplayName = user.DisplayName
+	}
+	return id, nil
 }
 
 // requireAdmin 只放行平台管理员。

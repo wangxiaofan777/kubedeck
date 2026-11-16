@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -63,6 +64,33 @@ func (h *handlers) createCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, c)
+}
+
+// probeCluster 用提交的凭据做一次性连通性探测，不写数据库、不返回凭据。
+func (h *handlers) probeCluster(w http.ResponseWriter, r *http.Request) {
+	var body clusterCredentialRequest
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	parsed, err := kube.ParseCredential(body.ingest())
+	if err != nil {
+		WriteError(r.Context(), w, NewError(CodeInvalidArgument, err.Error()))
+		return
+	}
+	cluster, err := kube.NewDirectCluster("probe", parsed.Config)
+	if err != nil {
+		WriteError(r.Context(), w, NewError(CodeInvalidArgument, "无法构建集群客户端"))
+		return
+	}
+	started := time.Now()
+	info := cluster.Probe(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"server":    parsed.Server,
+		"status":    info.Status,
+		"version":   info.Version,
+		"message":   info.Message,
+		"latencyMs": time.Since(started).Milliseconds(),
+	})
 }
 
 // getCluster 返回集群详情与脱敏凭据信息。
@@ -196,8 +224,8 @@ func writeClusterError(ctx context.Context, w http.ResponseWriter, err error) {
 	case errors.Is(err, cluster.ErrNotSupported):
 		WriteError(ctx, w, NewError(CodeInvalidArgument, err.Error()))
 	case errors.Is(err, cluster.ErrUnreachable):
-		e := NewError(CodeClusterUnreachable, err.Error())
-		WriteError(ctx, w, e)
+		WriteError(ctx, w, NewError(CodeClusterUnreachable,
+			"无法连接目标集群，请检查地址、证书与凭据"))
 	case errors.Is(err, cluster.ErrNoMasterKey):
 		WriteError(ctx, w, NewError(CodeClusterDegraded, "平台未配置主密钥，无法保存集群凭据"))
 	case errors.Is(err, domain.ErrConflict):

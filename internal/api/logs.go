@@ -63,6 +63,8 @@ func (h *handlers) podLog(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = stream.Close() }()
 
 	if opts.Follow {
+		// 解除 http.Server.WriteTimeout；follow 的生命周期由客户端断开或容器结束决定。
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 		streamLog(w, r, stream)
 		return
 	}
@@ -206,7 +208,11 @@ func (h *handlers) listEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	namespace := requestNamespace(r)
+	namespace, err := requestNamespace(r)
+	if err != nil {
+		WriteError(r.Context(), w, NewError(CodeInvalidArgument, err.Error()))
+		return
+	}
 	q := r.URL.Query()
 
 	var selectors []string

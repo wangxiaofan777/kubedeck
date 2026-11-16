@@ -70,8 +70,9 @@ func Timeout(d time.Duration) func(http.Handler) http.Handler {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// WebSocket 是长连接，不能套用请求级超时；由连接心跳与读超时管理。
-			if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			// WebSocket 与日志 follow 是长连接，不能套用请求级超时；
+			// 前者由心跳管理，后者由客户端断开或容器结束管理。
+			if isLongLivedRequest(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -80,6 +81,16 @@ func Timeout(d time.Duration) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// isLongLivedRequest 识别不适用请求级超时的流式请求。
+func isLongLivedRequest(r *http.Request) bool {
+	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return true
+	}
+	return r.Method == http.MethodGet &&
+		strings.HasSuffix(r.URL.Path, "/log") &&
+		r.URL.Query().Get("follow") == "true"
 }
 
 // CORS 按白名单放行跨域请求。白名单为空时不产生任何 CORS 头（仅同源）。

@@ -6,6 +6,81 @@ export interface ClusterInfo {
   message?: string
 }
 
+export interface CredentialMeta {
+  authType: string
+  fingerprint: string
+  keyVersion: number
+  rotatedAt: string
+  expiresAt?: string
+}
+
+export interface ClusterDetail {
+  health: ClusterInfo
+  credential?: CredentialMeta
+}
+
+export interface ProbeResult {
+  server: string
+  status: string
+  version: string
+  message?: string
+  latencyMs: number
+}
+
+export interface ClusterCredentialInput {
+  kubeconfig?: string
+  server?: string
+  token?: string
+  caData?: string
+  insecureSkipTLSVerify?: boolean
+}
+
+export interface AdminUser {
+  id: number
+  subject: string
+  email: string
+  displayName: string
+  source: string
+  isPlatformAdmin: boolean
+  status: string
+  createdAt: string
+  lastLoginAt?: string
+}
+
+export interface AdminRole {
+  id: number
+  code: string
+  name: string
+  description: string
+}
+
+export interface AdminCluster {
+  id: number
+  name: string
+  displayName: string
+  server: string
+  serverVersion: string
+  status: string
+}
+
+export interface DrainPodResult {
+  namespace?: string
+  name: string
+  result: 'evicted' | 'skipped' | 'blocked' | 'failed'
+  code?: string
+  message?: string
+}
+
+export interface DrainReport {
+  node: string
+  cordoned: boolean
+  evicted: number
+  skipped: number
+  blocked: number
+  failed: number
+  results: DrainPodResult[]
+}
+
 /** 总览统计范围：allNamespaces=false 表示只覆盖逐个读取成功的命名空间。 */
 export interface OverviewScope {
   allNamespaces: boolean
@@ -403,12 +478,63 @@ export const api = {
     return request<ClusterInfo[]>('/api/v1/clusters', { signal })
   },
 
+  createCluster(body: ClusterCredentialInput & {
+    name: string
+    displayName?: string
+    labels?: Record<string, string>
+  }): Promise<ClusterInfo> {
+    return request<ClusterInfo>('/api/v1/clusters', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  probeCluster(body: ClusterCredentialInput): Promise<ProbeResult> {
+    return request<ProbeResult>('/api/v1/clusters/probe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  patchCluster(
+    cluster: string,
+    body: { displayName?: string; labels?: Record<string, string> },
+  ): Promise<ClusterInfo> {
+    return request<ClusterInfo>(clusterPath(cluster), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  deleteCluster(cluster: string, confirmName: string): Promise<void> {
+    return request<void>(clusterPath(cluster), {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmName }),
+    })
+  },
+
+  credential(cluster: string, signal?: AbortSignal): Promise<CredentialMeta> {
+    return request<CredentialMeta>(`${clusterPath(cluster)}/credential`, { signal })
+  },
+
+  rotateCredential(cluster: string, body: ClusterCredentialInput): Promise<ClusterInfo> {
+    return request<ClusterInfo>(`${clusterPath(cluster)}/credential`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
   overview(cluster: string, signal?: AbortSignal): Promise<ClusterOverview> {
     return request<ClusterOverview>(`${clusterPath(cluster)}/overview`, { signal })
   },
 
-  clusterDetail(cluster: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    return request<Record<string, unknown>>(`${clusterPath(cluster)}`, { signal })
+  clusterDetail(cluster: string, signal?: AbortSignal): Promise<ClusterDetail> {
+    return request<ClusterDetail>(`${clusterPath(cluster)}`, { signal })
   },
 
   namespaces(cluster: string, signal?: AbortSignal): Promise<{ namespaces: string[] }> {
@@ -673,6 +799,49 @@ export const api = {
     )
   },
 
+  nodePods(cluster: string, name: string, signal?: AbortSignal): Promise<{ node: string; items: ResourceItem[] }> {
+    return request(
+      `${clusterPath(cluster)}/nodes/${encodeURIComponent(name)}/pods`,
+      { signal },
+    )
+  },
+
+  cordonNode(cluster: string, name: string): Promise<{ name: string; schedulable: boolean }> {
+    return request(
+      `${clusterPath(cluster)}/nodes/${encodeURIComponent(name)}/cordon`,
+      { method: 'POST' },
+    )
+  },
+
+  uncordonNode(cluster: string, name: string): Promise<{ name: string; schedulable: boolean }> {
+    return request(
+      `${clusterPath(cluster)}/nodes/${encodeURIComponent(name)}/uncordon`,
+      { method: 'POST' },
+    )
+  },
+
+  drainNode(
+    cluster: string,
+    name: string,
+    body: {
+      cordon?: boolean
+      force?: boolean
+      ignoreDaemonSets?: boolean
+      deleteEmptyDirData?: boolean
+      gracePeriodSeconds?: number
+      timeoutSeconds?: number
+    },
+  ): Promise<DrainReport> {
+    return request<DrainReport>(
+      `${clusterPath(cluster)}/nodes/${encodeURIComponent(name)}/drain`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    )
+  },
+
   operation(cluster: string, id: string, signal?: AbortSignal): Promise<WorkloadOperation> {
     return request<WorkloadOperation>(
       `${clusterPath(cluster)}/operations/${encodeURIComponent(id)}`,
@@ -758,10 +927,73 @@ export const api = {
   verifyAudit(): Promise<{
     checked: number
     intact: boolean
+    truncated?: boolean
     brokenId?: number
     brokenKind?: string
   }> {
     return request('/api/v1/admin/audit-logs/verify')
+  },
+
+  async exportAudit(
+    format: 'csv' | 'json',
+    filters: {
+      from?: string
+      to?: string
+      actor?: string
+      cluster?: string
+      resource?: string
+      result?: string
+    } = {},
+  ): Promise<{ blob: Blob; count: number; truncated: boolean }> {
+    const res = await fetch(this.auditExportURL(format, filters), {
+      credentials: 'same-origin',
+    })
+    if (!res.ok) throw await toError(res)
+    return {
+      blob: await res.blob(),
+      count: Number(res.headers.get('X-Audit-Export-Count') ?? '0'),
+      truncated: res.headers.get('X-Audit-Export-Truncated') === 'true',
+    }
+  },
+
+  adminUsers(q = '', signal?: AbortSignal): Promise<{ users: AdminUser[] }> {
+    return request(`/api/v1/admin/users${query({ q })}`, { signal })
+  },
+
+  adminRoles(signal?: AbortSignal): Promise<{ roles: AdminRole[] }> {
+    return request('/api/v1/admin/roles', { signal })
+  },
+
+  adminClusters(signal?: AbortSignal): Promise<{ clusters: AdminCluster[] }> {
+    return request('/api/v1/admin/clusters', { signal })
+  },
+
+  adminRoleBindings(signal?: AbortSignal): Promise<{ bindings: RoleBinding[] }> {
+    return request('/api/v1/admin/role-bindings', { signal })
+  },
+
+  putUserAccess(body: {
+    userId: number
+    clusterId: number
+    bindings: { namespace: string; roleCode: string }[]
+  }): Promise<void> {
+    return request<void>('/api/v1/admin/role-bindings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  deleteRoleBinding(id: number): Promise<void> {
+    return request<void>(`/api/v1/admin/role-bindings/${id}`, { method: 'DELETE' })
+  },
+
+  setUserStatus(id: number, status: 'active' | 'disabled'): Promise<void> {
+    return request<void>(`/api/v1/admin/users/${id}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    })
   },
 
   auditStats(params: {

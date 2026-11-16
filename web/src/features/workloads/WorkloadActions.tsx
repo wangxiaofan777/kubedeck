@@ -4,9 +4,9 @@ import {
   Button,
   Card,
   Descriptions,
+  Drawer,
   InputNumber,
   List,
-  Modal,
   Popconfirm,
   Progress,
   Space,
@@ -245,15 +245,21 @@ export default function WorkloadActions({ cluster, gvr, namespace, item, onChang
         <OperationProgress cluster={cluster} operationId={operationId} onDone={onChanged} />
       )}
 
-      <Modal
+      <Drawer
         open={scaleOpen}
         title="调整副本数"
-        okText="提交"
-        confirmLoading={busy}
-        onOk={() => void doScale()}
-        onCancel={() => setScaleOpen(false)}
+        width={480}
+        onClose={() => setScaleOpen(false)}
+        extra={
+          <Button type="primary" loading={busy} onClick={() => void doScale()}>
+            提交
+          </Button>
+        }
       >
         <Space direction="vertical" style={{ width: '100%' }}>
+          <div className="kd-muted" style={{ fontSize: 12 }}>
+            当前副本数：{currentReplicas}
+          </div>
           <InputNumber
             min={0}
             max={100000}
@@ -269,20 +275,27 @@ export default function WorkloadActions({ cluster, gvr, namespace, item, onChang
             />
           )}
         </Space>
-      </Modal>
+      </Drawer>
 
-      <Modal
+      <Drawer
         open={historyOpen}
         title="历史版本与回滚"
         width={900}
-        okText="回滚到所选版本"
-        okButtonProps={{ disabled: !selectedRevision, loading: busy }}
-        onOk={() => void doRollback()}
-        onCancel={() => {
+        onClose={() => {
           setHistoryOpen(false)
           setSelectedRevision(undefined)
           setDiff('')
         }}
+        extra={
+          <Button
+            type="primary"
+            disabled={!selectedRevision}
+            loading={busy}
+            onClick={() => void doRollback()}
+          >
+            回滚到所选版本
+          </Button>
+        }
       >
         <Typography.Paragraph type="secondary">
           当前 revision：{historyQuery.data?.currentRevision ?? '-'}
@@ -321,20 +334,20 @@ export default function WorkloadActions({ cluster, gvr, namespace, item, onChang
         />
         {diff && (
           <pre
+            className="kd-mono"
             style={{
               maxHeight: 260,
               overflow: 'auto',
-              background: '#fafafa',
-              border: '1px solid #f0f0f0',
-              borderRadius: 6,
+              background: '#0b1020',
+              color: '#d7e0ff',
+              borderRadius: 8,
               padding: 12,
-              fontSize: 12,
             }}
           >
             {diff}
           </pre>
         )}
-      </Modal>
+      </Drawer>
     </div>
   )
 }

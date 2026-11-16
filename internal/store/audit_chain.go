@@ -5,14 +5,18 @@ import (
 	"fmt"
 )
 
-// ChainStatus 是哈希链校验结果。
+// ChainStatus 是哈希链校验结果。Truncated 表示最早的分区已被保留策略删除，
+// 校验从第一条存活记录开始，不能据此判断更早的历史是否被篡改。
 type ChainStatus struct {
 	Checked    int    `json:"checked"`
 	BrokenID   int64  `json:"brokenId,omitempty"`
 	BrokenKind string `json:"brokenKind,omitempty"`
+	Truncated  bool   `json:"truncated,omitempty"`
 }
 
 // VerifyAuditChain 逐条重算哈希并检查前后衔接，返回第一个断裂点（如有）。
+// 保留期删除最老分区后，第一条存活记录的 prev_hash 指向已删除的记录；
+// 这种情况标记 Truncated 并继续校验存活区间，而不是误报为篡改。
 func (s *Store) VerifyAuditChain(ctx context.Context) (ChainStatus, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, hash, prev_hash,
@@ -29,6 +33,7 @@ func (s *Store) VerifyAuditChain(ctx context.Context) (ChainStatus, error) {
 	var (
 		status ChainStatus
 		prev   string
+		first  = true
 	)
 	for rows.Next() {
 		var (
@@ -41,7 +46,13 @@ func (s *Store) VerifyAuditChain(ctx context.Context) (ChainStatus, error) {
 			return ChainStatus{}, fmt.Errorf("store: scan audit chain row: %w", err)
 		}
 		status.Checked++
-		if prevHash != prev {
+		if first {
+			// 链的起点可能因保留期删除而不可见；只要当前记录自身哈希正确即可继续。
+			first = false
+			if prevHash != prev {
+				status.Truncated = true
+			}
+		} else if prevHash != prev {
 			status.BrokenID = id
 			status.BrokenKind = "prev_hash"
 			return status, nil

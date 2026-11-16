@@ -73,6 +73,27 @@ func (w *Writer) Record(entry domain.AuditEntry) bool {
 	}
 }
 
+// Available 表示审计链路当前是否可接受新的写操作。
+// 队列高水位或处于降级重试状态时返回 false，由 API 层拒绝高风险写请求。
+func (w *Writer) Available() bool {
+	if w.store == nil {
+		return true
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.degraded {
+		return false
+	}
+	return len(w.queue) < cap(w.queue)*9/10
+}
+
+// Dropped 返回累计丢弃的审计条数。
+func (w *Writer) Dropped() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.dropped
+}
+
 // Degraded 表示是否发生过审计积压或写入失败。
 func (w *Writer) Degraded() bool {
 	w.mu.Lock()

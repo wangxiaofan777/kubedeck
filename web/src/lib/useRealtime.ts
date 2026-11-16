@@ -63,6 +63,7 @@ export function useResourceRealtime({
     let socket: WebSocket | undefined
     let closed = false
     let timer: number | undefined
+    let stableTimer: number | undefined
     let attempts = 0
 
     const connect = () => {
@@ -73,7 +74,10 @@ export function useResourceRealtime({
       )
 
       socket.onopen = () => {
-        attempts = 0
+        // 只有连接稳定一段时间才重置退避；服务端接受后立即断开时仍会继续退避。
+        stableTimer = window.setTimeout(() => {
+          attempts = 0
+        }, 5_000)
         socket?.send(
           JSON.stringify({
             type: 'subscribe',
@@ -118,9 +122,12 @@ export function useResourceRealtime({
       }
 
       socket.onclose = () => {
+        if (stableTimer) window.clearTimeout(stableTimer)
         if (closed) return
         attempts += 1
-        const delay = Math.min(30_000, 500 * 2 ** Math.min(attempts, 6))
+        // 指数退避 + 抖动，避免服务端抖动时所有页面同时重连。
+        const base = Math.min(30_000, 500 * 2 ** Math.min(attempts, 6))
+        const delay = Math.round(base * (0.75 + Math.random() * 0.5))
         timer = window.setTimeout(connect, delay)
       }
     }
@@ -129,6 +136,7 @@ export function useResourceRealtime({
     return () => {
       closed = true
       if (timer) window.clearTimeout(timer)
+      if (stableTimer) window.clearTimeout(stableTimer)
       if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'unsubscribe', id: subscriptionID }))
       }

@@ -79,7 +79,7 @@ db:
 	bash scripts/dev-db.sh
 
 web-check:
-	cd $(WEB) && $(NPM) run lint && $(NPM) run typecheck
+	cd $(WEB) && $(NPM) run lint && $(NPM) run typecheck && $(NPM) test
 
 # 提交前统一入口：后端 + 前端检查与测试。
 check: lint test web-check

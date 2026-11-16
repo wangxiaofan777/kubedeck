@@ -20,6 +20,7 @@ export const RESOURCE_TYPES: ResourceType[] = [
     group: '工作负载',
     gvr: { group: '', version: 'v1', resource: 'pods' },
     namespaced: true,
+    creatable: false,
   },
   {
     key: 'deployments',
@@ -28,6 +29,15 @@ export const RESOURCE_TYPES: ResourceType[] = [
     group: '工作负载',
     gvr: { group: 'apps', version: 'v1', resource: 'deployments' },
     namespaced: true,
+  },
+  {
+    key: 'replicasets',
+    label: 'ReplicaSets',
+    kind: 'ReplicaSet',
+    group: '工作负载',
+    gvr: { group: 'apps', version: 'v1', resource: 'replicasets' },
+    namespaced: true,
+    creatable: false,
   },
   {
     key: 'statefulsets',
@@ -148,6 +158,7 @@ export function statusOf(item: ResourceItem, type: ResourceType): string {
     }
     case 'deployments':
     case 'statefulsets':
+    case 'replicasets':
       return `${asNumber(status.readyReplicas)}/${asNumber(spec.replicas, 1)}`
     case 'daemonsets':
       return `${asNumber(status.numberReady)}/${asNumber(status.desiredNumberScheduled)}`

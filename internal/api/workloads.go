@@ -457,7 +457,7 @@ func (h *handlers) getOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t, _, err := h.transportFor(r.Context(), id, op.Cluster, op.Namespace)
+	t, _, err := h.transportFor(r.Context(), id, op.Cluster, op.Namespace, false)
 	if err != nil {
 		status, message := transportError(err)
 		WriteError(r.Context(), w, NewError(status, message))

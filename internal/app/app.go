@@ -64,7 +64,12 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	clusterMgr := cluster.NewManager(registry, st, ring, logger)
+	// 数据库关闭时不能把 typed-nil 的 *store.Store 装进接口，否则 nil 判断失效。
+	var clusterStore cluster.Store
+	if st != nil {
+		clusterStore = st
+	}
+	clusterMgr := cluster.NewManager(registry, clusterStore, ring, logger)
 	if cfg.DevKubeconfig == "" {
 		if err := clusterMgr.Load(ctx); err != nil {
 			logger.Warn("load registered clusters", "err", err)
@@ -150,8 +155,17 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 
 	cancel()
-	for _, done := range workers {
-		<-done
+	workersDone := make(chan struct{})
+	go func() {
+		for _, done := range workers {
+			<-done
+		}
+		close(workersDone)
+	}()
+	select {
+	case <-workersDone:
+	case <-time.After(5 * time.Second):
+		logger.Warn("shutdown workers timeout; audit batch may be incomplete")
 	}
 	logger.Info("server stopped")
 	return runErr

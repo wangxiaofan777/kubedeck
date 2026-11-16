@@ -1,9 +1,19 @@
 :root {
+  --kd-bg: #f4f6f9;
+  --kd-surface: #ffffff;
+  --kd-border: #e6ebf2;
+  --kd-text: #0f172a;
+  --kd-text-secondary: #64748b;
+  --kd-primary: #2563eb;
+  --kd-sider: #0f172a;
+  --kd-sider-active: #1e293b;
+  --kd-radius: 10px;
+  --kd-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  color: rgba(0, 0, 0, 0.88);
-  background: #f5f5f5;
+  color: var(--kd-text);
+  background: var(--kd-bg);
 }
 
 * {
@@ -19,5 +29,486 @@ body,
 }
 
 body {
-  background: #f5f5f5;
+  background: var(--kd-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 外壳 ---------- */
+
+.kd-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  font-weight: 650;
+  letter-spacing: 0.2px;
+  font-size: 15px;
+}
+
+.kd-brand-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  font-size: 15px;
+}
+
+.kd-sider {
+  border-right: 1px solid rgba(148, 163, 184, 0.12);
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+.kd-sider .ant-menu {
+  background: transparent;
+}
+
+.kd-sider-head {
+  padding: 16px 20px 8px;
+  color: #64748b;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.kd-sider-foot {
+  margin: 16px 12px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.08);
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.kd-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--kd-border);
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.kd-cluster-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--kd-border);
+  border-radius: 8px;
+  cursor: pointer;
+  background: #fff;
+  min-width: 180px;
+  transition: border-color 0.15s ease;
+}
+
+.kd-cluster-switch:hover {
+  border-color: #cbd5e1;
+}
+
+.kd-health-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.kd-health-dot.healthy {
+  background: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
+}
+
+.kd-health-dot.degraded {
+  background: #d97706;
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.12);
+}
+
+.kd-health-dot.unreachable,
+.kd-health-dot.unknown {
+  background: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+}
+
+.kd-search-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 280px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--kd-border);
+  border-radius: 8px;
+  color: var(--kd-text-secondary);
+  background: #f8fafc;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.kd-search-trigger:hover {
+  background: #fff;
+  border-color: #cbd5e1;
+}
+
+.kd-kbd {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.kd-content {
+  padding: 20px 24px 40px;
+  min-height: calc(100vh - 56px);
+}
+
+.kd-page {
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+/* ---------- 页面头 ---------- */
+
+.kd-page-head {
+  margin-bottom: 18px;
+}
+
+.kd-breadcrumb {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.kd-page-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.kd-page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.kd-page-subtitle {
+  margin-top: 4px;
+  color: var(--kd-text-secondary);
+  font-size: 12px;
+}
+
+.kd-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---------- 卡片与表格 ---------- */
+
+.kd-card {
+  background: var(--kd-surface);
+  border: 1px solid var(--kd-border);
+  border-radius: var(--kd-radius);
+  box-shadow: var(--kd-shadow);
+}
+
+.kd-card-pad {
+  padding: 18px 20px;
+}
+
+.kd-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  margin: 0 0 12px;
+}
+
+.kd-table-card .ant-table {
+  background: transparent;
+}
+
+.kd-table-card .ant-table-thead > tr > th {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.kd-table-card .ant-table-tbody > tr > td {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+/* ---------- 状态 ---------- */
+
+.kd-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.kd-pill::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.75;
+}
+
+.kd-pill.success {
+  color: #15803d;
+  background: #f0fdf4;
+}
+
+.kd-pill.warning {
+  color: #b45309;
+  background: #fffbeb;
+}
+
+.kd-pill.danger {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.kd-pill.info {
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.kd-pill.neutral {
+  color: #475569;
+  background: #f1f5f9;
+}
+
+/* ---------- 动作栏 ---------- */
+
+.kd-action-bar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #e2e8f0;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.25);
+}
+
+.kd-action-bar .ant-btn-text {
+  color: #cbd5e1;
+}
+
+/* ---------- 日志 ---------- */
+
+.kd-log {
+  margin: 0;
+  padding: 14px 16px;
+  background: #0b1020;
+  color: #d7e0ff;
+  border-radius: 8px;
+  min-height: 320px;
+  max-height: calc(100vh - 300px);
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ---------- 命令面板 ---------- */
+
+.kd-command-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(2px);
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+
+.kd-command {
+  width: min(680px, calc(100vw - 48px));
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.35);
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.kd-command-input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  padding: 16px 18px;
+  font-size: 15px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.kd-command-list {
+  max-height: 52vh;
+  overflow: auto;
+  padding: 8px;
+}
+
+.kd-command-group {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.kd-command-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #0f172a;
+}
+
+.kd-command-item.active {
+  background: #eff6ff;
+}
+
+.kd-command-item .meta {
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.kd-command-empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+/* ---------- 详情工作台 ---------- */
+
+.kd-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 18px;
+  align-items: start;
+}
+
+.kd-rail {
+  position: sticky;
+  top: 76px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.kd-rail-block {
+  background: #fff;
+  border: 1px solid var(--kd-border);
+  border-radius: var(--kd-radius);
+  padding: 14px 16px;
+}
+
+.kd-rail-label {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  margin-bottom: 6px;
+}
+
+.kd-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.kd-kv > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.kd-kv span:first-child {
+  color: #64748b;
+  flex: none;
+}
+
+.kd-link {
+  color: var(--kd-primary);
+  cursor: pointer;
+}
+
+.kd-link:hover {
+  text-decoration: underline;
+}
+
+/* ---------- 其他 ---------- */
+
+.kd-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.kd-muted {
+  color: var(--kd-text-secondary);
+}
+
+.kd-chart-label {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.kd-scroll {
+  overflow: auto;
+}
+
+.kd-fade-in {
+  animation: kd-fade 0.18s ease;
+}
+
+@keyframes kd-fade {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .kd-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .kd-rail {
+    position: static;
+  }
 }

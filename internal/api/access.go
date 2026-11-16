@@ -121,8 +121,8 @@ func (h *handlers) can(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) reviewAccess(ctx context.Context, id auth.Identity, bindings []domain.RoleBinding, check accessCheck) accessResult {
-	if !bindingAllows(bindings, check.Cluster, check.Namespace, id.PlatformAdmin) {
-		return accessResult{Allowed: false, Reason: "平台未授予该集群或命名空间"}
+	if !bindingAllows(bindings, check.Cluster, check.Namespace, id.PlatformAdmin, isWriteVerb(check.Verb)) {
+		return accessResult{Allowed: false, Reason: "平台未授予该集群、命名空间或该操作权限"}
 	}
 	cluster, ok := h.cluster(check.Cluster)
 	if !ok {
@@ -168,11 +168,7 @@ func upstreamReason(err error) string {
 	if err == nil {
 		return ""
 	}
-	msg := err.Error()
-	if len(msg) > 200 {
-		msg = msg[:200]
-	}
-	return msg
+	return FromUpstream(err).Message
 }
 
 // bindingsFor 返回用户绑定；平台管理员不需要平台绑定。
@@ -183,14 +179,17 @@ func (h *handlers) bindingsFor(ctx context.Context, id auth.Identity) ([]domain.
 	return h.authStore.BindingsForUser(ctx, id.UserID)
 }
 
-// bindingAllows 判断平台绑定是否覆盖集群与命名空间。管理员始终允许。
-// namespace 为空表示集群级请求，只接受 "*" 绑定。
-func bindingAllows(bindings []domain.RoleBinding, cluster, namespace string, admin bool) bool {
+// bindingAllows 判断平台绑定是否覆盖集群、命名空间与动词。管理员始终允许。
+// namespace 为空表示集群级请求，只接受 "*" 绑定；viewer 只允许只读动词。
+func bindingAllows(bindings []domain.RoleBinding, cluster, namespace string, admin, write bool) bool {
 	if admin {
 		return true
 	}
 	for _, b := range bindings {
 		if b.ClusterName != cluster {
+			continue
+		}
+		if write && b.RoleCode == "viewer" {
 			continue
 		}
 		if b.Namespace == "*" {
@@ -204,7 +203,8 @@ func bindingAllows(bindings []domain.RoleBinding, cluster, namespace string, adm
 }
 
 // clusterAccess 是资源 handler 的统一准入检查：集群可见 + 命名空间在绑定范围内。
-func (h *handlers) clusterAccess(ctx context.Context, id auth.Identity, cluster, namespace string) (bool, error) {
+// write 为 true 时同时要求角色允许写操作（viewer 在平台层直接拒绝）。
+func (h *handlers) clusterAccess(ctx context.Context, id auth.Identity, cluster, namespace string, write bool) (bool, error) {
 	if id.PlatformAdmin {
 		return true, nil
 	}
@@ -212,7 +212,16 @@ func (h *handlers) clusterAccess(ctx context.Context, id auth.Identity, cluster,
 	if err != nil {
 		return false, err
 	}
-	return bindingAllows(bindings, cluster, namespace, false), nil
+	return bindingAllows(bindings, cluster, namespace, false, write), nil
+}
+
+// isWriteVerb 区分只读与写动词；viewer 绑定只允许只读。
+func isWriteVerb(verb string) bool {
+	switch verb {
+	case "get", "list", "watch":
+		return false
+	}
+	return true
 }
 
 // clusterVisible 判断用户是否可访问某集群的集群级只读信息（发现、健康等）：

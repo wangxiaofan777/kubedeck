@@ -114,6 +114,33 @@ func TestTimeout_CancelsContext(t *testing.T) {
 	}
 }
 
+func TestTimeout_SkipsLongLivedRequests(t *testing.T) {
+	h := Timeout(5 * time.Millisecond)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(20 * time.Millisecond)
+		if err := r.Context().Err(); err != nil {
+			w.Header().Set("X-Timed-Out", "1")
+			return
+		}
+		w.Header().Set("X-Alive", "1")
+	}))
+
+	ws := httptest.NewRequest(http.MethodGet, "/api/v1/clusters/local/stream", nil)
+	ws.Header.Set("Upgrade", "websocket")
+	recWS := httptest.NewRecorder()
+	h.ServeHTTP(recWS, ws)
+	if recWS.Header().Get("X-Timed-Out") != "" {
+		t.Fatal("websocket request should be exempt from the request timeout")
+	}
+
+	follow := httptest.NewRequest(http.MethodGet,
+		"/api/v1/clusters/local/pods/default/web/log?follow=true", nil)
+	recFollow := httptest.NewRecorder()
+	h.ServeHTTP(recFollow, follow)
+	if recFollow.Header().Get("X-Alive") != "1" {
+		t.Fatal("log follow request should be exempt from the request timeout")
+	}
+}
+
 func TestCORS_AllowedOrigin(t *testing.T) {
 	h := CORS([]string{"https://console.example.com"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

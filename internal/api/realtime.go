@@ -47,15 +47,16 @@ type resyncNotice struct {
 }
 
 type streamConn struct {
-	h        *handlers
-	identity auth.Identity
-	cluster  string
-	ws       *websocket.Conn
-	out      chan []byte
-	resync   chan resyncNotice
-	ctx      context.Context
-	cancel   context.CancelFunc
-	writeMu  sync.Mutex
+	h         *handlers
+	identity  auth.Identity
+	sessionID string
+	cluster   string
+	ws        *websocket.Conn
+	out       chan []byte
+	resync    chan resyncNotice
+	ctx       context.Context
+	cancel    context.CancelFunc
+	writeMu   sync.Mutex
 
 	mu   sync.Mutex
 	subs map[string]*subscription
@@ -93,15 +94,17 @@ func (h *handlers) stream(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	sc := &streamConn{
-		h:        h,
-		identity: id,
-		cluster:  chi.URLParam(r, "cluster"),
-		ws:       ws,
-		out:      make(chan []byte, wsWriteQueue),
-		resync:   make(chan resyncNotice, 8),
-		ctx:      ctx,
-		cancel:   cancel,
-		subs:     make(map[string]*subscription),
+		h:         h,
+		identity:  id,
+		sessionID: sessionID(r),
+		cluster:   chi.URLParam(r, "cluster"),
+		ws:        ws,
+		out:       make(chan []byte, wsWriteQueue),
+		// 容量与最大订阅数对齐：20 个订阅同时触发 resync 时不能被丢弃。
+		resync: make(chan resyncNotice, maxSubscriptionsPerConn*2),
+		ctx:    ctx,
+		cancel: cancel,
+		subs:   make(map[string]*subscription),
 	}
 	defer func() {
 		cancel()
@@ -249,7 +252,7 @@ func (c *streamConn) subscribe(req streamRequest) {
 	}
 	gvr := schema.GroupVersionResource{Group: group, Version: req.Version, Resource: req.Resource}
 
-	allowed, err := c.h.clusterAccess(c.ctx, c.identity, c.cluster, req.Namespace)
+	allowed, err := c.h.clusterAccess(c.ctx, c.identity, c.cluster, req.Namespace, false)
 	if err != nil || !allowed {
 		c.send(map[string]any{"type": "error", "id": req.ID, "code": "FORBIDDEN", "message": "无权订阅该命名空间"})
 		return
@@ -393,8 +396,13 @@ func (c *streamConn) requestResync(id, reason string) {
 	}
 }
 
-// checkPermissions 周期性复核平台绑定，权限回收后 60 秒内终止订阅。
+// checkPermissions 周期性复核平台绑定与会话有效性，权限回收后 60 秒内终止订阅。
 func (c *streamConn) checkPermissions() {
+	if !c.sessionValid() {
+		c.send(map[string]any{"type": "error", "code": "UNAUTHENTICATED", "message": "登录状态已失效"})
+		c.cancel()
+		return
+	}
 	c.mu.Lock()
 	type item struct{ id, namespace string }
 	items := make([]item, 0, len(c.subs))
@@ -403,12 +411,21 @@ func (c *streamConn) checkPermissions() {
 	}
 	c.mu.Unlock()
 	for _, it := range items {
-		allowed, err := c.h.clusterAccess(c.ctx, c.identity, c.cluster, it.namespace)
+		allowed, err := c.h.clusterAccess(c.ctx, c.identity, c.cluster, it.namespace, false)
 		if err != nil || !allowed {
 			c.unsubscribe(it.id)
 			c.send(map[string]any{"type": "error", "id": it.id, "code": "FORBIDDEN", "message": "权限已被回收，订阅已终止"})
 		}
 	}
+}
+
+// sessionValid 校验连接创建时的会话是否仍然有效；无 Cookie 的开发会话不在此处判断。
+func (c *streamConn) sessionValid() bool {
+	if c.sessionID == "" || c.h.authSvc == nil {
+		return true
+	}
+	_, ok := c.h.authSvc.Session(c.sessionID)
+	return ok
 }
 
 func summarize(obj *unstructured.Unstructured) map[string]any {

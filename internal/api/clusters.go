@@ -22,7 +22,12 @@ func (h *handlers) transport(w http.ResponseWriter, r *http.Request) (kube.Trans
 		WriteError(r.Context(), w, NewError(CodeUnauthenticated, "登录状态无效或已过期"))
 		return nil, nil, false
 	}
-	t, cluster, err := h.transportFor(r.Context(), id, chi.URLParam(r, "cluster"), requestNamespace(r))
+	ns, err := requestNamespace(r)
+	if err != nil {
+		WriteError(r.Context(), w, NewError(CodeInvalidArgument, err.Error()))
+		return nil, nil, false
+	}
+	t, cluster, err := h.transportFor(r.Context(), id, chi.URLParam(r, "cluster"), ns, isWriteMethod(r.Method))
 	if err != nil {
 		status, message := transportError(err)
 		WriteError(r.Context(), w, NewError(status, message))
@@ -31,17 +36,32 @@ func (h *handlers) transport(w http.ResponseWriter, r *http.Request) (kube.Trans
 	return t, cluster, true
 }
 
-// requestNamespace 优先使用查询参数，其次使用路径参数（Pod 日志/驱逐等路由）。
-func requestNamespace(r *http.Request) string {
-	if ns := r.URL.Query().Get("namespace"); ns != "" {
-		return ns
+// requestNamespace 解析唯一命名空间：路径参数优先，query 只能与之一致。
+// 两处不一致时直接报错，避免"用 A 做准入、对 B 执行"。
+func requestNamespace(r *http.Request) (string, error) {
+	pathNS := chi.URLParam(r, "namespace")
+	queryNS := r.URL.Query().Get("namespace")
+	if pathNS != "" {
+		if queryNS != "" && queryNS != pathNS {
+			return "", errors.New("路径与查询参数中的命名空间不一致")
+		}
+		return pathNS, nil
 	}
-	return chi.URLParam(r, "namespace")
+	return queryNS, nil
+}
+
+// isWriteMethod 把 HTTP 方法映射为平台角色需要的写权限。
+func isWriteMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	return true
 }
 
 // transportFor 是可复用的集群访问入口（操作进度查询等场景使用）。
-func (h *handlers) transportFor(ctx context.Context, id auth.Identity, name, namespace string) (kube.Transport, kube.ClusterAccess, error) {
-	allowed, err := h.clusterAccess(ctx, id, name, namespace)
+func (h *handlers) transportFor(ctx context.Context, id auth.Identity, name, namespace string, write bool) (kube.Transport, kube.ClusterAccess, error) {
+	allowed, err := h.clusterAccess(ctx, id, name, namespace, write)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -100,6 +100,10 @@ func parseKubeconfig(raw string) (ParsedCredential, error) {
 	if auth.Exec != nil || auth.AuthProvider != nil {
 		return ParsedCredential{}, errors.New("kubeconfig 不支持 exec 或 auth-provider 凭据")
 	}
+	// 文件路径来自用户输入，禁止服务端读取本地文件。
+	if auth.TokenFile != "" || auth.ClientCertificate != "" || auth.ClientKey != "" {
+		return ParsedCredential{}, errors.New("kubeconfig 不支持文件路径凭据，请使用内联 token 或 client-certificate-data")
+	}
 	if err := ValidateServer(cluster.Server); err != nil {
 		return ParsedCredential{}, err
 	}
@@ -114,8 +118,6 @@ func parseKubeconfig(raw string) (ParsedCredential, error) {
 	switch {
 	case auth.Token != "":
 		cfg.BearerToken = auth.Token
-	case auth.TokenFile != "":
-		cfg.BearerTokenFile = auth.TokenFile
 	case len(auth.ClientCertificateData) > 0 && len(auth.ClientKeyData) > 0:
 		if _, err := tls.X509KeyPair(auth.ClientCertificateData, auth.ClientKeyData); err != nil {
 			return ParsedCredential{}, fmt.Errorf("客户端证书无效: %w", err)

@@ -183,6 +183,21 @@ paths:
         "201": { description: created }
         "400": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /api/v1/clusters/probe:
+    post:
+      tags: [clusters, admin]
+      summary: 接入前探测（不落库）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/ClusterCreateKubeconfig"
+                - $ref: "#/components/schemas/ClusterCreateToken"
+      responses:
+        "200": { description: probe result }
+        "400": { $ref: "#/components/responses/Error" }
   /api/v1/clusters/{cluster}:
     parameters:
       - $ref: "#/components/parameters/Cluster"
@@ -687,6 +702,71 @@ paths:
           content:
             text/plain:
               schema: { type: string }
+  /api/v1/clusters/{cluster}/nodes/{name}/pods:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - in: path
+        name: name
+        required: true
+        schema: { type: string }
+    get:
+      tags: [nodes]
+      summary: 节点上的 Pod
+      responses:
+        "200": { description: pod list }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/v1/clusters/{cluster}/nodes/{name}/cordon:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - in: path
+        name: name
+        required: true
+        schema: { type: string }
+    post:
+      tags: [nodes]
+      summary: 停止调度
+      responses:
+        "200": { description: cordoned }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/v1/clusters/{cluster}/nodes/{name}/uncordon:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - in: path
+        name: name
+        required: true
+        schema: { type: string }
+    post:
+      tags: [nodes]
+      summary: 恢复调度
+      responses:
+        "200": { description: uncordoned }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/v1/clusters/{cluster}/nodes/{name}/drain:
+    parameters:
+      - $ref: "#/components/parameters/Cluster"
+      - in: path
+        name: name
+        required: true
+        schema: { type: string }
+    post:
+      tags: [nodes]
+      summary: 驱逐节点上的 Pod
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cordon: { type: boolean }
+                force: { type: boolean }
+                ignoreDaemonSets: { type: boolean }
+                deleteEmptyDirData: { type: boolean }
+                gracePeriodSeconds: { type: integer }
+                timeoutSeconds: { type: integer, maximum: 300 }
+      responses:
+        "200": { description: drain report }
+        "409": { $ref: "#/components/responses/Error" }
   /api/v1/clusters/{cluster}/events:
     parameters:
       - $ref: "#/components/parameters/Cluster"

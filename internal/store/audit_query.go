@@ -75,9 +75,10 @@ func (s *Store) CountAudit(ctx context.Context, f AuditFilter) (int, error) {
 }
 
 // QueryAudit 按时间倒序查询审计记录。
+// 交互分页与导出共用该入口：上限 5000，交互列表由 handler 限制为 500。
 func (s *Store) QueryAudit(ctx context.Context, f AuditFilter) ([]domain.AuditEntry, error) {
 	clause, args := auditWhere(f)
-	limit, offset := pageArgs(f.Limit, f.Offset)
+	limit, offset := auditPageArgs(f.Limit, f.Offset)
 	args = append(args, limit, offset)
 
 	sql := fmt.Sprintf(`SELECT %s FROM audit_logs%s ORDER BY occurred_at DESC, id DESC LIMIT $%d OFFSET $%d`,
@@ -98,6 +99,18 @@ func (s *Store) QueryAudit(ctx context.Context, f AuditFilter) ([]domain.AuditEn
 		entries = append(entries, e)
 	}
 	return entries, mapError(rows.Err())
+}
+
+// auditPageArgs 是审计专用分页：导出需要一次取回较大结果，不能套用用户列表的 500 上限。
+func auditPageArgs(limit, offset int) (int, int) {
+	const maxAuditPage = 5000
+	if limit <= 0 || limit > maxAuditPage {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
 }
 
 func scanAuditEntry(row pgx.Row) (domain.AuditEntry, error) {

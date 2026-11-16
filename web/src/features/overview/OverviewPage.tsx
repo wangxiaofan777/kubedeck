@@ -1,11 +1,14 @@
-import { Alert, Button, Card, Col, Empty, Progress, Row, Space, Spin, Statistic, Table, Tag, Typography } from 'antd'
-import { ReloadOutlined } from '@ant-design/icons'
+import { Alert, Button, Card, Col, Empty, Row, Space, Table, Tag } from 'antd'
+import { ArrowRightOutlined, ReloadOutlined } from '@ant-design/icons'
+import { useNavigate, useParams } from 'react-router-dom'
 import type { ColumnsType } from 'antd/es/table'
-import { useParams } from 'react-router-dom'
 import { ApiError, type ClusterUsage, type OverviewEvent } from '../../lib/api'
+import PageHeader from '../../components/PageHeader'
+import { AreaSpark, DistributionBar, MiniBar } from '../../components/Charts'
+import StatusPill from '../../components/StatusPill'
+import { ErrorState, PageSkeleton } from '../../components/StateViews'
+import { formatCPU, formatDateTime, formatMemory } from '../../lib/format'
 import { useOverview, useUsageTrend, type UsageSample } from './useOverview'
-
-const { Title, Text } = Typography
 
 const UNAVAILABLE_LABELS: Record<string, string> = {
   nodes: '节点',
@@ -18,209 +21,194 @@ const UNAVAILABLE_LABELS: Record<string, string> = {
   metrics: '资源用量',
 }
 
-const EVENT_COLUMNS: ColumnsType<OverviewEvent> = [
-  {
-    title: '时间',
-    dataIndex: 'lastTimestamp',
-    width: 170,
-    render: (value: string) => formatTime(value),
-  },
-  {
-    title: '类型',
-    dataIndex: 'type',
-    width: 90,
-    render: (value: string) =>
-      value ? <Tag color={value === 'Warning' ? 'warning' : 'default'}>{value}</Tag> : '-',
-  },
-  { title: '原因', dataIndex: 'reason', width: 140 },
-  { title: '对象', dataIndex: 'object', width: 220, ellipsis: true },
-  { title: '消息', dataIndex: 'message', ellipsis: true },
-]
-
-function formatTime(value?: string): string {
-  if (!value) return '-'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime()) || date.getUTCFullYear() <= 1) return '-'
-  return date.toLocaleString()
-}
-
-function formatMilliCPU(milli: number): string {
-  if (milli <= 0) return '0'
-  if (milli % 1000 === 0) return `${milli / 1000} 核`
-  return `${(milli / 1000).toFixed(2)} 核`
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes <= 0) return '0'
-  const gib = bytes / 1024 ** 3
-  if (gib >= 1) return `${gib.toFixed(gib >= 10 ? 0 : 1)} GiB`
-  return `${(bytes / 1024 ** 2).toFixed(0)} MiB`
-}
-
-function unavailableLabel(key: string): string {
-  return UNAVAILABLE_LABELS[key] ?? key
-}
-
-function formatPercent(value: number): string {
-  return `${value.toFixed(2)}%`
-}
-
-/** Sparkline 用内联 SVG 绘制，避免为单条趋势引入图表库。 */
-function Sparkline({ values, color }: { values: number[]; color: string }) {
-  if (values.length < 2) {
-    return <Text type="secondary">采样中，稍后显示趋势</Text>
-  }
-  const max = Math.max(...values)
-  const min = Math.min(...values)
-  const span = max - min || 1
-  const points = values
-    .map((value, index) => {
-      const x = (index / (values.length - 1)) * 240
-      const y = 44 - ((value - min) / span) * 40
-      return `${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
-  return (
-    <svg viewBox="0 0 240 48" width="100%" height="48" role="img" aria-label="用量趋势">
-      <polyline points={points} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-/** UsageCard 展示当前用量与会话内趋势；指标不可用或范围受限时给出明确提示。 */
-function UsageCard({ usage, samples }: { usage?: ClusterUsage | null; samples: UsageSample[] }) {
-  if (!usage) {
-    return (
-      <Card title="资源用量" extra={<Tag>不可用</Tag>}>
-        <Alert
-          type="info"
-          showIcon
-          message="指标不可用"
-          description="集群未启用指标 API（metrics-server），或当前账号没有指标读取权限。其余统计不受影响，稍后可刷新重试。"
-        />
-      </Card>
-    )
-  }
-
-  const scoped = usage.scope === 'pods'
-  const cpuValues = samples.map((sample) => sample.cpuMilli)
-  const memoryValues = samples.map((sample) => sample.memoryBytes)
-  const windowSeconds = (samples.length - 1) * 30
-  const windowLabel =
-    windowSeconds > 0 ? (windowSeconds < 60 ? `约 ${windowSeconds} 秒` : `约 ${Math.round(windowSeconds / 60)} 分钟`) : ''
-
+function StatCard({
+  label,
+  value,
+  suffix,
+  hint,
+  tone,
+  onClick,
+}: {
+  label: string
+  value: string | number
+  suffix?: string
+  hint?: string
+  tone?: 'success' | 'warning' | 'danger'
+  onClick?: () => void
+}) {
+  const color =
+    tone === 'danger'
+      ? '#b91c1c'
+      : tone === 'warning'
+        ? '#b45309'
+        : tone === 'success'
+          ? '#15803d'
+          : '#0f172a'
   return (
     <Card
-      title="资源用量"
-      extra={<Tag color={scoped ? 'blue' : 'green'}>{scoped ? '仅可见命名空间' : '节点口径'}</Tag>}
+      hoverable={!!onClick}
+      onClick={onClick}
+      styles={{ body: { padding: 18 } }}
+      style={{ cursor: onClick ? 'pointer' : undefined }}
     >
-      <Row gutter={[16, 16]}>
-        <Col xs={24} md={12}>
-          <Statistic title="CPU 用量" value={formatMilliCPU(usage.cpuMilli)} />
-          {usage.cpuPercent != null && (
-            <Progress
-              percent={Math.min(100, usage.cpuPercent)}
-              format={() => formatPercent(usage.cpuPercent as number)}
-              size="small"
-              style={{ marginTop: 8 }}
-            />
-          )}
-          {scoped && <Text type="secondary">仅统计可见命名空间内 Pod</Text>}
-        </Col>
-        <Col xs={24} md={12}>
-          <Statistic title="内存用量" value={formatBytes(usage.memoryBytes)} />
-          {usage.memoryPercent != null && (
-            <Progress
-              percent={Math.min(100, usage.memoryPercent)}
-              format={() => formatPercent(usage.memoryPercent as number)}
-              size="small"
-              style={{ marginTop: 8 }}
-            />
-          )}
-          {scoped && <Text type="secondary">仅统计可见命名空间内 Pod</Text>}
-        </Col>
-      </Row>
-
-      <Row gutter={[16, 8]} style={{ marginTop: 16 }}>
-        <Col xs={24} md={12}>
-          <Text type="secondary">CPU 趋势</Text>
-          <Sparkline values={cpuValues} color="#1677ff" />
-        </Col>
-        <Col xs={24} md={12}>
-          <Text type="secondary">内存趋势</Text>
-          <Sparkline values={memoryValues} color="#52c41a" />
-        </Col>
-      </Row>
-
-      <Text type="secondary">
-        本次会话采样 {samples.length} 个点
-        {windowLabel ? `（${windowLabel}）` : ''}，刷新或重新进入页面后重新开始。
-      </Text>
+      <div
+        style={{
+          fontSize: 11,
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+          color: '#94a3b8',
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 6 }}>
+        <span style={{ fontSize: 26, fontWeight: 650, color, lineHeight: 1.1 }}>{value}</span>
+        {suffix && <span style={{ fontSize: 12, color: '#64748b' }}>{suffix}</span>}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginTop: 6,
+        }}
+      >
+        <span style={{ fontSize: 12, color: '#64748b' }}>{hint}</span>
+        {onClick && <ArrowRightOutlined style={{ fontSize: 11, color: '#94a3b8' }} />}
+      </div>
     </Card>
   )
 }
 
-/** OverviewPage 是进入集群后的默认落地页，只读、按权限范围统计。 */
-export default function OverviewPage() {
-  const { cluster } = useParams<{ cluster: string }>()
-  const overview = useOverview(cluster)
-  const usageSamples = useUsageTrend(cluster, overview.data?.usage)
-
-  if (overview.isLoading) {
+function UsagePanel({ usage, samples }: { usage?: ClusterUsage | null; samples: UsageSample[] }) {
+  if (!usage) {
     return (
-      <div style={{ display: 'grid', placeItems: 'center', minHeight: 240 }}>
-        <Spin />
-      </div>
+      <Card title="资源用量" size="small" extra={<Tag>不可用</Tag>}>
+        <Alert
+          type="info"
+          showIcon
+          message="指标不可用"
+          description="集群未启用 metrics-server，或当前账号没有指标读取权限。其余统计不受影响。"
+        />
+      </Card>
     )
   }
+  const scoped = usage.scope === 'pods'
+  return (
+    <Card
+      title="资源用量"
+      size="small"
+      extra={<Tag color={scoped ? 'blue' : 'green'}>{scoped ? '仅可见命名空间' : '节点口径'}</Tag>}
+    >
+      <Row gutter={[20, 12]}>
+        <Col span={12}>
+          <div className="kd-chart-label">CPU 用量</div>
+          <div style={{ fontSize: 22, fontWeight: 650, margin: '2px 0 4px' }}>
+            {formatCPU(usage.cpuMilli)}
+          </div>
+          <div className="kd-chart-label">
+            {usage.cpuPercent != null ? `${usage.cpuPercent.toFixed(1)}% 已分配` : '可分配基线未知'}
+          </div>
+          <AreaSpark
+            values={samples.map((sample) => sample.cpuMilli)}
+            color="#2563eb"
+            label="CPU 趋势"
+          />
+        </Col>
+        <Col span={12}>
+          <div className="kd-chart-label">内存用量</div>
+          <div style={{ fontSize: 22, fontWeight: 650, margin: '2px 0 4px' }}>
+            {formatMemory(usage.memoryBytes)}
+          </div>
+          <div className="kd-chart-label">
+            {usage.memoryPercent != null
+              ? `${usage.memoryPercent.toFixed(1)}% 已分配`
+              : '可分配基线未知'}
+          </div>
+          <AreaSpark
+            values={samples.map((sample) => sample.memoryBytes)}
+            color="#16a34a"
+            label="内存趋势"
+          />
+        </Col>
+      </Row>
+      <div className="kd-chart-label" style={{ marginTop: 8 }}>
+        会话内采样 {samples.length} 个点，刷新页面后重新开始
+      </div>
+    </Card>
+  )
+}
 
+export default function OverviewPage() {
+  const { cluster } = useParams()
+  const navigate = useNavigate()
+  const overview = useOverview(cluster)
+  const samples = useUsageTrend(cluster, overview.data?.usage)
+
+  if (overview.isLoading) return <PageSkeleton rows={10} />
   if (overview.isError && !overview.data) {
-    const unreachable = overview.error instanceof ApiError && overview.error.code === 'CLUSTER_UNREACHABLE'
+    const unreachable =
+      overview.error instanceof ApiError && overview.error.code === 'CLUSTER_UNREACHABLE'
     return (
-      <Alert
-        type="error"
-        showIcon
-        message={unreachable ? '当前集群不可达' : '总览加载失败'}
-        description={
-          overview.error instanceof Error
-            ? overview.error.message
-            : '请检查网络或稍后重试。'
-        }
-        action={
-          <Button size="small" onClick={() => void overview.refetch()}>
-            重试
-          </Button>
-        }
+      <ErrorState
+        error={overview.error}
+        title={unreachable ? '当前集群不可达' : '总览加载失败'}
+        onRetry={() => void overview.refetch()}
       />
     )
   }
-
   const data = overview.data
   if (!data) return null
 
-  const nodePercent = data.nodes.total > 0 ? Math.round((data.nodes.ready / data.nodes.total) * 100) : 0
-  const hasWorkloads =
-    data.pods.total > 0 ||
-    data.workloads.deployments.total > 0 ||
-    data.workloads.statefulSets.total > 0 ||
-    data.workloads.daemonSets.total > 0
+  const base = `/clusters/${encodeURIComponent(cluster ?? '')}`
+  const podTotal = data.pods.total
+  const podHealthy = data.pods.running + data.pods.succeeded
+  const workloadUnavailable =
+    data.workloads.deployments.unavailable +
+    data.workloads.statefulSets.unavailable +
+    data.workloads.daemonSets.unavailable
+  const warningEvents = data.events.filter((event) => event.type === 'Warning').slice(0, 6)
+
+  const eventColumns: ColumnsType<OverviewEvent> = [
+    {
+      title: '时间',
+      dataIndex: 'lastTimestamp',
+      width: 150,
+      render: (value: string) => formatDateTime(value),
+    },
+    {
+      title: '类型',
+      dataIndex: 'type',
+      width: 80,
+      render: (value: string) => <StatusPill value={value} />,
+    },
+    { title: '原因', dataIndex: 'reason', width: 150 },
+    { title: '对象', dataIndex: 'object', width: 220, ellipsis: true },
+    { title: '消息', dataIndex: 'message', ellipsis: true },
+  ]
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Row justify="space-between" align="middle" gutter={12}>
-        <Col>
-          <Title level={4} style={{ margin: 0 }}>
-            {cluster} 总览
-          </Title>
-          <Space size={8} wrap>
-            <Text type="secondary">最近更新：{formatTime(data.fetchedAt)}</Text>
-            {!data.scope.allNamespaces && (
-              <Tag color="blue">统计范围：仅可见命名空间（{data.scope.namespaces} 个）</Tag>
-            )}
+    <div>
+      <PageHeader
+        crumbs={[{ label: cluster ?? '', to: `${base}/overview` }, { label: '总览' }]}
+        title="集群总览"
+        subtitle={
+          <span className="kd-muted">
+            最近更新 {formatDateTime(data.fetchedAt)}
+            {!data.scope.allNamespaces && ` · 统计范围：${data.scope.namespaces} 个可见命名空间`}
+          </span>
+        }
+        tags={
+          <>
             {data.scope.truncated && <Tag color="orange">部分统计已截断</Tag>}
-          </Space>
-        </Col>
-        <Col>
+            {data.unavailable.length > 0 && (
+              <Tag color="warning">
+                不可用：{data.unavailable.map((key) => UNAVAILABLE_LABELS[key] ?? key).join('、')}
+              </Tag>
+            )}
+          </>
+        }
+        actions={
           <Button
             icon={<ReloadOutlined />}
             loading={overview.isFetching && !overview.isLoading}
@@ -228,154 +216,146 @@ export default function OverviewPage() {
           >
             刷新
           </Button>
-        </Col>
-      </Row>
-
-      {data.unavailable.length > 0 && (
-        <Alert
-          type="warning"
-          showIcon
-          message={`部分统计不可用：${data.unavailable.map(unavailableLabel).join('、')}`}
-          description="其余统计仍按当前权限范围展示，可稍后刷新重试。"
-        />
-      )}
+        }
+      />
 
       {overview.isError && (
         <Alert
           type="warning"
           showIcon
+          style={{ marginBottom: 14 }}
           message="刷新失败，正在显示上一次结果"
           description={overview.error instanceof Error ? overview.error.message : undefined}
         />
       )}
 
-      {!hasWorkloads && (
-        <Alert
-          type="info"
-          showIcon
-          message="当前可见范围内没有工作负载"
-          description="节点与容量信息仍然可用；接入工作负载后这里会自动更新。"
-        />
-      )}
+      <Row gutter={[14, 14]} style={{ marginBottom: 14 }}>
+        <Col xs={24} sm={12} xl={6}>
+          <StatCard
+            label="Pod 运行"
+            value={`${data.pods.running}/${podTotal}`}
+            hint={`Pending ${data.pods.pending} · 异常 ${data.pods.crashLoop}`}
+            tone={data.pods.crashLoop > 0 ? 'warning' : 'success'}
+            onClick={() => navigate(`${base}/pods`)}
+          />
+        </Col>
+        <Col xs={24} sm={12} xl={6}>
+          <StatCard
+            label="节点就绪"
+            value={`${data.nodes.ready}/${data.nodes.total}`}
+            hint={`可分配 ${formatCPU(data.nodes.allocatable.cpuMilli)} · ${formatMemory(data.nodes.allocatable.memoryBytes)}`}
+            tone={data.nodes.ready < data.nodes.total ? 'warning' : 'success'}
+            onClick={() => navigate(`${base}/nodes`)}
+          />
+        </Col>
+        <Col xs={24} sm={12} xl={6}>
+          <StatCard
+            label="异常工作负载"
+            value={workloadUnavailable}
+            suffix={`/ ${data.workloads.deployments.total + data.workloads.statefulSets.total + data.workloads.daemonSets.total}`}
+            hint="Deployment / StatefulSet / DaemonSet"
+            tone={workloadUnavailable > 0 ? 'danger' : 'success'}
+            onClick={() => navigate(`${base}/deployments`)}
+          />
+        </Col>
+        <Col xs={24} sm={12} xl={6}>
+          <StatCard
+            label="命名空间"
+            value={data.namespaces.total}
+            hint={`Pod 健康率 ${podTotal > 0 ? Math.round((podHealthy / podTotal) * 100) : 0}%`}
+            onClick={() => navigate(`${base}/namespaces`)}
+          />
+        </Col>
+      </Row>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="节点"
-              value={data.nodes.ready}
-              suffix={`/ ${data.nodes.total} 就绪`}
-              valueStyle={{ color: data.nodes.total > data.nodes.ready ? '#faad14' : undefined }}
-            />
-            <Progress
-              percent={nodePercent}
-              status={nodePercent === 100 ? 'success' : 'active'}
-              size="small"
-              style={{ marginTop: 8 }}
-            />
-          </Card>
+      <Row gutter={[14, 14]} style={{ marginBottom: 14 }}>
+        <Col xs={24} xl={14}>
+          <UsagePanel usage={data.usage} samples={samples} />
         </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic title="可分配 CPU" value={formatMilliCPU(data.nodes.allocatable.cpuMilli)} />
-            <Text type="secondary">全部就绪节点汇总</Text>
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic title="可分配内存" value={formatBytes(data.nodes.allocatable.memoryBytes)} />
-            <Text type="secondary">全部就绪节点汇总</Text>
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic title="命名空间" value={data.namespaces.total} suffix="个" />
+        <Col xs={24} xl={10}>
+          <Card title="Pod 状态分布" size="small" style={{ height: '100%' }}>
+            {podTotal === 0 ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="可见范围内没有 Pod" />
+            ) : (
+              <DistributionBar
+                segments={[
+                  { key: 'running', label: 'Running', value: data.pods.running, color: '#16a34a' },
+                  { key: 'pending', label: 'Pending', value: data.pods.pending, color: '#f59e0b' },
+                  { key: 'failed', label: 'Failed', value: data.pods.failed, color: '#dc2626' },
+                  { key: 'crash', label: 'CrashLoop', value: data.pods.crashLoop, color: '#b91c1c' },
+                  {
+                    key: 'succeeded',
+                    label: 'Succeeded',
+                    value: data.pods.succeeded,
+                    color: '#94a3b8',
+                  },
+                  { key: 'unknown', label: 'Unknown', value: data.pods.unknown, color: '#cbd5e1' },
+                ]}
+              />
+            )}
+            <div style={{ marginTop: 18 }}>
+              <div className="kd-section-title">工作负载健康</div>
+              <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                {[
+                  { key: 'deployments', label: 'Deployment', value: data.workloads.deployments },
+                  { key: 'statefulSets', label: 'StatefulSet', value: data.workloads.statefulSets },
+                  { key: 'daemonSets', label: 'DaemonSet', value: data.workloads.daemonSets },
+                ].map((item) => (
+                  <div
+                    key={item.key}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() =>
+                      navigate(
+                        `${base}/${
+                          item.key === 'statefulSets'
+                            ? 'statefulsets'
+                            : item.key === 'daemonSets'
+                              ? 'daemonsets'
+                              : 'deployments'
+                        }`,
+                      )
+                    }
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                      <span>{item.label}</span>
+                      <span className="kd-muted">
+                        {item.value.total - item.value.unavailable}/{item.value.total}
+                      </span>
+                    </div>
+                    <MiniBar
+                      value={item.value.total - item.value.unavailable}
+                      total={item.value.total}
+                      danger={item.value.unavailable}
+                    />
+                  </div>
+                ))}
+              </Space>
+            </div>
           </Card>
         </Col>
       </Row>
 
-      <UsageCard usage={data.usage} samples={usageSamples} />
-
-      <Card title="Pod 状态" extra={<Tag>{data.pods.total} 个</Tag>}>
-        {data.pods.total === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="可见范围内没有 Pod" />
-        ) : (
-          <Row gutter={[16, 16]}>
-            <Col xs={12} md={8} lg={4}>
-              <Statistic title="Running" value={data.pods.running} />
-            </Col>
-            <Col xs={12} md={8} lg={4}>
-              <Statistic
-                title="Pending"
-                value={data.pods.pending}
-                valueStyle={{ color: data.pods.pending > 0 ? '#faad14' : undefined }}
-              />
-            </Col>
-            <Col xs={12} md={8} lg={4}>
-              <Statistic title="Succeeded" value={data.pods.succeeded} />
-            </Col>
-            <Col xs={12} md={8} lg={4}>
-              <Statistic
-                title="Failed"
-                value={data.pods.failed}
-                valueStyle={{ color: data.pods.failed > 0 ? '#ff4d4f' : undefined }}
-              />
-            </Col>
-            <Col xs={12} md={8} lg={4}>
-              <Statistic
-                title="Unknown"
-                value={data.pods.unknown}
-                valueStyle={{ color: data.pods.unknown > 0 ? '#ff4d4f' : undefined }}
-              />
-            </Col>
-            <Col xs={12} md={8} lg={4}>
-              <Statistic
-                title="CrashLoop / 拉取失败"
-                value={data.pods.crashLoop}
-                valueStyle={{ color: data.pods.crashLoop > 0 ? '#ff4d4f' : undefined }}
-              />
-            </Col>
-          </Row>
-        )}
-      </Card>
-
-      <Card title="工作负载">
-        <Table
-          size="small"
-          pagination={false}
-          rowKey="key"
-          dataSource={[
-            { key: 'deployments', name: 'Deployment', ...data.workloads.deployments },
-            { key: 'statefulSets', name: 'StatefulSet', ...data.workloads.statefulSets },
-            { key: 'daemonSets', name: 'DaemonSet', ...data.workloads.daemonSets },
-          ]}
-          columns={[
-            { title: '类型', dataIndex: 'name' },
-            { title: '总数', dataIndex: 'total', width: 120 },
-            {
-              title: '异常',
-              dataIndex: 'unavailable',
-              width: 120,
-              render: (value: number) =>
-                value > 0 ? <Tag color="error">{value}</Tag> : <Tag color="success">正常</Tag>,
-            },
-          ]}
-        />
-      </Card>
-
-      <Card title="最近事件" extra={<Text type="secondary">最多 20 条</Text>}>
-        {data.events.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有最近事件" />
+      <Card
+        title="最近告警事件"
+        size="small"
+        extra={
+          <span className="kd-muted" style={{ fontSize: 11 }}>
+            最多 6 条 Warning
+          </span>
+        }
+      >
+        {warningEvents.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有 Warning 事件" />
         ) : (
           <Table
             size="small"
             rowKey={(record) => `${record.namespace ?? ''}/${record.object}/${record.lastTimestamp}`}
-            dataSource={data.events}
-            columns={EVENT_COLUMNS}
+            dataSource={warningEvents}
+            columns={eventColumns}
             pagination={false}
           />
         )}
       </Card>
-    </Space>
+    </div>
   )
 }

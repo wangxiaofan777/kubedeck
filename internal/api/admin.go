@@ -11,6 +11,18 @@ import (
 	"github.com/kubedeck/kubedeck/internal/domain"
 )
 
+// requirePlatformStore 在数据库未配置时统一返回 503，避免管理接口解引用空存储。
+func (h *handlers) requirePlatformStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.adminStore == nil {
+			WriteError(r.Context(), w, NewError(CodeServiceUnavailable,
+				"平台数据库未配置，用户、权限与审计功能不可用"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // listUsers 供权限管理界面搜索用户。
 func (h *handlers) listUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := h.adminStore.SearchUsers(r.Context(), r.URL.Query().Get("q"), 50)

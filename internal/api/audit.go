@@ -71,10 +71,16 @@ func (b *bodyHasher) digest() string {
 }
 
 // auditRequests 为写操作与敏感读建立审计记录；只保存请求体摘要，不保存内容。
+// 审计链路不可用时拒绝写请求，避免"操作成功但没有审计"。
 func (h *handlers) auditRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h.audit == nil || !shouldAuditRequest(r) {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if requiresAuditGuarantee(r) && !h.auditAvailable() {
+			WriteError(r.Context(), w, NewError(CodeServiceUnavailable,
+				"审计存储暂不可用，为避免丢失审计记录，当前写操作已被拒绝，请稍后重试"))
 			return
 		}
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
@@ -94,6 +100,27 @@ func shouldAuditRequest(r *http.Request) bool {
 		return isSensitiveRead(r.URL.Path)
 	}
 	return !strings.HasPrefix(r.URL.Path, "/api/v1/auth/can")
+}
+
+// requiresAuditGuarantee 标记必须"有审计才允许执行"的高风险写操作。
+// 登出只影响本地会话，不因审计不可用而阻塞。
+func requiresAuditGuarantee(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	return !strings.HasSuffix(r.URL.Path, "/auth/logout")
+}
+
+// auditAvailable 在审计实现支持可用性探测时使用其判断；测试替身默认视为可用。
+func (h *handlers) auditAvailable() bool {
+	if h.audit == nil {
+		return true
+	}
+	if av, ok := h.audit.(interface{ Available() bool }); ok {
+		return av.Available()
+	}
+	return true
 }
 
 // isSensitiveRead 识别 Secret 明文读取；列表浏览不入操作审计。
@@ -194,6 +221,26 @@ func auditTarget(r *http.Request) (verb, group, resource, namespace, name string
 			verb = "get"
 		}
 		return verb, group, resource, namespace, name
+	}
+
+	// /clusters/{c}/nodes/{name}/{action}
+	for i := 0; i+2 < len(segments); i++ {
+		if segments[i] != "nodes" {
+			continue
+		}
+		name = segments[i+1]
+		resource = "nodes"
+		if i+2 < len(segments) {
+			switch segments[i+2] {
+			case "cordon":
+				verb = "node.cordon"
+			case "uncordon":
+				verb = "node.uncordon"
+			case "drain":
+				verb = "node.drain"
+			}
+		}
+		return verb, "", resource, namespace, name
 	}
 
 	// /clusters/{c}/workloads/{group}/{version}/{resource}/{name}/{action}

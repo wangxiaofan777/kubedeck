@@ -18,6 +18,8 @@ KubeDeck 有两层权限，二者都必须满足：
 
 平台角色是“可见范围”的门槛，不会自动授予 Kubernetes 权限。PlatformAdmin 如果自己的 K8s 身份没有权限，仍然只能看到 403。
 
+Viewer 的写操作在平台准入层即被拒绝（`bindingAllows(..., write=true)`），不会转发到目标集群；前端隐藏按钮只是体验优化。
+
 ### 命名空间可见性
 
 - 只绑定具体命名空间的用户：`GET /clusters/{c}/namespaces` 直接返回绑定范围内的命名空间（去重排序），不要求集群级权限，也不会泄露范围外的名称。
@@ -46,6 +48,8 @@ KubeDeck 有两层权限，二者都必须满足：
 | 历史/回滚 | `GET .../history`、`POST .../rollback` | `get`/`list` ReplicaSet + `update` Deployment |
 | 暂停/恢复 | `POST .../pause|resume` | `update` Deployment |
 | 驱逐 Pod | `POST /pods/{ns}/{name}/evict` | `create` `pods/eviction`；受 PDB 约束 |
+| 节点调度 | `POST /nodes/{name}/cordon|uncordon` | `patch` `nodes` |
+| 节点驱逐 | `POST /nodes/{name}/drain` | `list` `pods`、`create` `pods/eviction`、`get` `poddisruptionbudgets` |
 | 日志 | `GET /pods/{ns}/{name}/log` | `get` `pods/log` |
 | 事件 | `GET /events` | `list` `events` |
 | 实时订阅 | `GET /stream` | `list` + `watch` `<resource>` |

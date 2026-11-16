@@ -454,7 +454,7 @@ func TestCanBatchReviewWithBinding(t *testing.T) {
 		order: []string{"prod"},
 	}
 	store := fakeAuthStore{bindings: []domain.RoleBinding{{
-		UserID: 9, ClusterName: "prod", Namespace: "default", RoleCode: "viewer",
+		UserID: 9, ClusterName: "prod", Namespace: "default", RoleCode: "developer",
 	}}}
 	router := NewRouter(Options{
 		Registry:  registry,
@@ -478,6 +478,39 @@ func TestCanBatchReviewWithBinding(t *testing.T) {
 	}
 	if len(resp.Results) != 1 || !resp.Results[0].Allowed {
 		t.Fatalf("results = %+v", resp.Results)
+	}
+}
+
+func TestCanRejectsViewerWrite(t *testing.T) {
+	transport := &fakeTransport{name: "prod", namespaces: []string{"default"}}
+	registry := &fakeRegistry{
+		items: map[string]kube.ClusterAccess{"prod": &fakeCluster{t: transport}},
+		order: []string{"prod"},
+	}
+	store := fakeAuthStore{bindings: []domain.RoleBinding{{
+		UserID: 9, ClusterName: "prod", Namespace: "default", RoleCode: "viewer",
+	}}}
+	router := NewRouter(Options{
+		Registry:  registry,
+		Auth:      fakeAuth{authenticated: true, identity: auth.Identity{UserID: 9, Subject: "viewer"}},
+		AuthStore: store,
+	})
+	body := `{"checks":[{"cluster":"prod","namespace":"default","verb":"delete","resource":"pods"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/can", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Results []accessResult `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Allowed {
+		t.Fatalf("viewer write must be denied: %+v", resp.Results)
 	}
 }
 

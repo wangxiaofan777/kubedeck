@@ -78,6 +78,26 @@ func NewService(cfg Config) *Service {
 // DevMode 表示是否启用了本地开发身份。
 func (s *Service) DevMode() bool { return s.dev != nil }
 
+// Mode 返回当前登录模式：dev、oidc 或 unconfigured。
+func (s *Service) Mode() string {
+	switch {
+	case s.dev != nil:
+		return "dev"
+	case s.provider != nil:
+		return "oidc"
+	default:
+		return "unconfigured"
+	}
+}
+
+// Issuer 返回 OIDC issuer；非 OIDC 模式返回空串。
+func (s *Service) Issuer() string {
+	if s.provider == nil {
+		return ""
+	}
+	return s.provider.Issuer()
+}
+
 // DevIdentity 返回开发身份副本。
 func (s *Service) DevIdentity() (Identity, bool) {
 	if s.dev == nil {

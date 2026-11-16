@@ -83,14 +83,19 @@ func Timeout(d time.Duration) func(http.Handler) http.Handler {
 	}
 }
 
-// isLongLivedRequest 识别不适用请求级超时的流式请求。
+// isLongLivedRequest 识别不适用请求级超时的流式/长操作请求。
 func isLongLivedRequest(r *http.Request) bool {
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		return true
 	}
-	return r.Method == http.MethodGet &&
+	if r.Method == http.MethodGet &&
 		strings.HasSuffix(r.URL.Path, "/log") &&
-		r.URL.Query().Get("follow") == "true"
+		r.URL.Query().Get("follow") == "true" {
+		return true
+	}
+	// 节点驱逐有自身的 120/300 秒超时；不能套用普通请求的 30 秒超时，
+	// 否则 DrainNode 会提前把剩余 Pod 标记为超时并返回部分结果。
+	return r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/drain")
 }
 
 // CORS 按白名单放行跨域请求。白名单为空时不产生任何 CORS 头（仅同源）。

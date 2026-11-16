@@ -92,8 +92,10 @@ func NewRouter(opts Options) http.Handler {
 	r.Get("/metrics", h.metricsHandler)
 
 	// OIDC 跳转与回调必须位于未认证路由。
+	r.Get("/auth/mode", h.authMode)
 	r.Get("/auth/login", h.login)
 	r.Get("/auth/callback", h.callback)
+	r.Post("/auth/dev-login", h.devLogin)
 	r.Post("/auth/logout", h.logout)
 	r.Post("/auth/bootstrap", h.bootstrap)
 

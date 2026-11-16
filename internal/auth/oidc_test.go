@@ -6,9 +6,12 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,10 +35,11 @@ func (f *fakeUsers) UpsertUser(ctx context.Context, u domain.User) (domain.User,
 func (f *fakeUsers) SetUserStatus(context.Context, int64, string) error { return nil }
 
 type fakeIDP struct {
-	server *httptest.Server
-	key    *rsa.PrivateKey
-	nonce  string
-	revoke bool
+	server        *httptest.Server
+	key           *rsa.PrivateKey
+	nonce         string
+	revoke        bool
+	emailVerified *bool
 }
 
 func newFakeIDP(t *testing.T) *fakeIDP {
@@ -79,16 +83,21 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 			http.Error(w, err.Error(), 500)
 			return
 		}
+		verified := true
+		if idp.emailVerified != nil {
+			verified = *idp.emailVerified
+		}
 		claims := map[string]any{
-			"iss":    issuer,
-			"aud":    "kubedeck",
-			"sub":    "user-1",
-			"email":  "alice@example.com",
-			"name":   "Alice",
-			"groups": []string{"dev"},
-			"nonce":  idp.nonce,
-			"iat":    time.Now().Unix(),
-			"exp":    time.Now().Add(time.Hour).Unix(),
+			"iss":            issuer,
+			"aud":            "kubedeck",
+			"sub":            "user-1",
+			"email":          "alice@example.com",
+			"email_verified": verified,
+			"name":           "Alice",
+			"groups":         []string{"dev"},
+			"nonce":          idp.nonce,
+			"iat":            time.Now().Unix(),
+			"exp":            time.Now().Add(time.Hour).Unix(),
 		}
 		raw, err := jwt.Signed(signer).Claims(claims).Serialize()
 		if err != nil {
@@ -180,6 +189,81 @@ func TestOIDCRejectsStateMismatch(t *testing.T) {
 	}
 	if _, _, err := svc.FinishLogin(t.Context(), state, "other", "code"); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("err = %v, want ErrInvalidState", err)
+	}
+}
+
+func TestOIDCRejectsUnverifiedEmail(t *testing.T) {
+	idp := newFakeIDP(t)
+	verified := false
+	idp.emailVerified = &verified
+	provider, err := NewProvider(t.Context(), OIDCConfig{
+		Issuer: idp.server.URL, ClientID: "kubedeck", RedirectURL: "https://example.com/cb",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(Config{Provider: provider, Users: &fakeUsers{}, Sessions: NewMemorySessions(5, time.Hour)})
+	authURL, state, err := svc.StartLogin("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(authURL)
+	idp.nonce = u.Query().Get("nonce")
+
+	if _, _, err := svc.FinishLogin(t.Context(), state, state, "code-1"); err == nil {
+		t.Fatal("expected unverified email to be rejected")
+	} else if !strings.Contains(err.Error(), "email is not verified") {
+		t.Fatalf("error = %v, want email verification failure", err)
+	}
+}
+
+func TestOIDCAllowsUnverifiedEmailWhenConfigured(t *testing.T) {
+	idp := newFakeIDP(t)
+	verified := false
+	idp.emailVerified = &verified
+	provider, err := NewProvider(t.Context(), OIDCConfig{
+		Issuer: idp.server.URL, ClientID: "kubedeck", RedirectURL: "https://example.com/cb",
+		AllowUnverifiedEmail: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(Config{Provider: provider, Users: &fakeUsers{}, Sessions: NewMemorySessions(5, time.Hour)})
+	authURL, state, err := svc.StartLogin("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(authURL)
+	idp.nonce = u.Query().Get("nonce")
+
+	if _, _, err := svc.FinishLogin(t.Context(), state, state, "code-1"); err != nil {
+		t.Fatalf("explicitly allowed unverified email should log in: %v", err)
+	}
+}
+
+func TestNormalizeGroups(t *testing.T) {
+	groups := []string{" dev ", "", "ops", "dev", "  ", "ops"}
+	got, dropped := normalizeGroups(groups)
+	if dropped != 0 {
+		t.Fatalf("dropped = %d, want 0", dropped)
+	}
+	if !reflect.DeepEqual(got, []string{"dev", "ops"}) {
+		t.Fatalf("groups = %v, want [dev ops]", got)
+	}
+
+	tooMany := make([]string, maxOIDCGroups+2)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("group-%d", i)
+	}
+	got, dropped = normalizeGroups(tooMany)
+	if len(got) != maxOIDCGroups || dropped != 2 {
+		t.Fatalf("len = %d dropped = %d, want %d/2", len(got), dropped, maxOIDCGroups)
+	}
+
+	long := strings.Repeat("g", maxOIDCGroupLen+1)
+	got, dropped = normalizeGroups([]string{long, "ok"})
+	if len(got) != 1 || got[0] != "ok" || dropped != 1 {
+		t.Fatalf("groups = %v dropped = %d, want [ok]/1", got, dropped)
 	}
 }
 

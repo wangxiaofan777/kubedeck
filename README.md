@@ -21,7 +21,7 @@ MVP 功能已完成并通过本地 k3s 端到端验收（2026-11-12）：
 
 完整任务进度见 [`openspec/changes/archive/2026-11-13-add-kubedeck-mvp/tasks.md`](openspec/changes/archive/2026-11-13-add-kubedeck-mvp/tasks.md)。
 
-> **安全提示**：dev 模式用本地 kubeconfig 直连集群，**没有登录与权限校验**，只能在本机运行，禁止暴露到网络。生产请使用 OIDC + HTTPS。
+> **安全提示**：dev 模式用本地 kubeconfig 直连集群，使用本地开发身份，**没有企业 IdP 与集群权限校验**。首次使用需在登录页显式进入，只能在本机运行，禁止暴露到网络。生产请使用 OIDC + HTTPS。
 
 ## 快速开始
 

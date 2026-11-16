@@ -1,5 +1,6 @@
 # 默认值面向生产：OIDC + 外部 PostgreSQL + 已有 Secret。
 # 本地验收可通过 --set dev.enabled=true 挂载 kubeconfig，仅用于开发环境。
+# 会话与 OIDC 访问令牌保存在进程内存中，当前只支持单副本；>1 会在渲染时报错。
 replicaCount: 1
 
 image:

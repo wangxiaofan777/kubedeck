@@ -46,6 +46,9 @@ type Config struct {
 	OIDCClientSecret string   `yaml:"oidc_client_secret"`
 	OIDCRedirectURL  string   `yaml:"oidc_redirect_url"`
 	OIDCScopes       []string `yaml:"oidc_scopes"`
+	// OIDCAllowUnverifiedEmail 允许 IdP 返回 email_verified=false 或缺失时继续登录。
+	// 默认 false：只有明确验证过的邮箱才会成为集群身份。
+	OIDCAllowUnverifiedEmail bool `yaml:"oidc_allow_unverified_email"`
 	// BootstrapToken 用于创建首个平台管理员；创建成功后接口自动失效。
 	BootstrapToken string `yaml:"bootstrap_token"`
 	// CookieInsecure 仅供本地 HTTP 调试；生产必须为 false（Secure Cookie）。
@@ -160,6 +163,16 @@ func Load() (Config, error) {
 			if s = strings.TrimSpace(s); s != "" {
 				cfg.OIDCScopes = append(cfg.OIDCScopes, s)
 			}
+		}
+	}
+	if v := os.Getenv("KUBEDECK_OIDC_ALLOW_UNVERIFIED_EMAIL"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true":
+			cfg.OIDCAllowUnverifiedEmail = true
+		case "false":
+			cfg.OIDCAllowUnverifiedEmail = false
+		default:
+			return cfg, fmt.Errorf("KUBEDECK_OIDC_ALLOW_UNVERIFIED_EMAIL must be true or false, got %q", v)
 		}
 	}
 	if v := os.Getenv("KUBEDECK_BOOTSTRAP_TOKEN"); v != "" {

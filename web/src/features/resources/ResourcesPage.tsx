@@ -87,6 +87,7 @@ export default function ResourcesPage() {
     cluster,
     gvr: type?.gvr ?? { group: '', version: 'v1', resource: 'pods' },
     namespace,
+    labelSelector,
     queryKey,
     resourceVersion: listQuery.data?.resourceVersion,
     enabled: !!cluster && !!type && !continueToken,

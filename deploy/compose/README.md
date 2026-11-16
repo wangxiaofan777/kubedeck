@@ -2,7 +2,7 @@
 
 本目录提供 KubeDeck 的非 Kubernetes 部署方式：KubeDeck + PostgreSQL + Caddy TLS 反向代理。适合单机、小团队、演示和边缘环境。
 
-> 应用固定 **单副本**。会话保存在进程内存，后台任务没有选主；需要多副本/高可用请使用 Helm Chart。
+> 应用固定 **单副本**。会话保存在进程内存，后台任务没有选主；共享会话存储尚未实现，因此 Helm Chart 同样限制为单副本。需要多副本/高可用前必须先扩展会话存储。
 
 ## 1. 前置条件
 
@@ -10,7 +10,7 @@
 |---|---|
 | Docker Engine | 24+，含 Compose v2 |
 | 域名 | 一个解析到本机的域名；Caddy 用它申请证书 |
-| OIDC IdP | 支持授权码 + PKCE，提供 `sub`、`email`、`groups` |
+| OIDC IdP | 支持授权码 + PKCE，提供 `sub`、`email`、`groups`；`email` 存在时默认要求 `email_verified=true` |
 | 端口 | 80、443 可用 |
 | 目标集群 | apiserver 从容器网络可达（见 §6） |
 

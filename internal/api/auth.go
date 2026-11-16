@@ -21,6 +21,8 @@ const (
 type AuthService interface {
 	DevMode() bool
 	DevIdentity() (auth.Identity, bool)
+	Mode() string
+	Issuer() string
 	NewDevSession() (auth.Session, error)
 	StartLogin(returnTo string) (authURL, state string, err error)
 	FinishLogin(ctx context.Context, state, cookieState, code string) (auth.Session, string, error)
@@ -66,11 +68,54 @@ func (h *handlers) clearSessionCookie(w http.ResponseWriter) {
 	h.setSessionCookie(w, "", -1)
 }
 
+// authMode 返回无需认证的登录方式信息；只暴露可公开的提示，不包含任何凭据。
+func (h *handlers) authMode(w http.ResponseWriter, r *http.Request) {
+	resp := map[string]any{
+		"mode":     "unconfigured",
+		"loginUrl": "/auth/login",
+	}
+	if h.authSvc == nil {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	switch h.authSvc.Mode() {
+	case "dev":
+		resp["mode"] = "dev"
+		if id, ok := h.authSvc.DevIdentity(); ok {
+			name := id.DisplayName
+			if name == "" {
+				name = id.KubeUser
+			}
+			resp["devUser"] = name
+		}
+	case "oidc":
+		resp["mode"] = "oidc"
+		resp["issuer"] = h.authSvc.Issuer()
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// devLogin 仅在开发模式可用：显式建立本地会话，避免任意请求自动获得身份。
+func (h *handlers) devLogin(w http.ResponseWriter, r *http.Request) {
+	if h.authSvc == nil || !h.authSvc.DevMode() {
+		WriteError(r.Context(), w, NewError(CodeNotFound, "开发登录未启用"))
+		return
+	}
+	sess, err := h.authSvc.NewDevSession()
+	if err != nil {
+		WriteError(r.Context(), w, FromPlatformError(err))
+		return
+	}
+	h.setSessionCookie(w, sess.ID, int(time.Until(time.Unix(sess.ExpiresAt, 0)).Seconds()))
+	h.auditAuthEvent(r, sess.Identity, "login", http.StatusOK)
+	writeJSON(w, http.StatusOK, map[string]any{"user": sess.Identity})
+}
+
 // login 跳转到 IdP；returnTo 只允许站内相对路径。
 func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
 	if h.authSvc == nil || h.authSvc.DevMode() {
-		// 开发模式不需要登录；直接把用户送回页面。
-		http.Redirect(w, r, "/", http.StatusFound)
+		// 开发模式不使用 OIDC；把用户送回登录页选择开发登录。
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	authURL, state, err := h.authSvc.StartLogin(r.URL.Query().Get("returnTo"))
@@ -243,7 +288,7 @@ func (h *handlers) auditAuthEvent(r *http.Request, id auth.Identity, verb string
 	h.audit.Record(entry)
 }
 
-// requireIdentity 是 API 鉴权中间件。开发模式下首次请求自动建立本地会话。
+// requireIdentity 是 API 鉴权中间件。开发模式同样要求先完成显式开发登录。
 func (h *handlers) requireIdentity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h.authSvc == nil {
@@ -264,15 +309,6 @@ func (h *handlers) requireIdentity(next http.Handler) http.Handler {
 			}
 			next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), id)))
 			return
-		}
-		if h.authSvc.DevMode() {
-			sess, err := h.authSvc.NewDevSession()
-			if err == nil {
-				h.setSessionCookie(w, sess.ID, int(time.Until(time.Unix(sess.ExpiresAt, 0)).Seconds()))
-				h.auditAuthEvent(r, sess.Identity, "login", http.StatusOK)
-				next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), sess.Identity)))
-				return
-			}
 		}
 		WriteError(r.Context(), w, NewError(CodeUnauthenticated, "登录状态无效或已过期"))
 	})

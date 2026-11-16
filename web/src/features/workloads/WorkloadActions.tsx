@@ -24,6 +24,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, type GVR, type ResourceItem, type Revision } from '../../lib/api'
 import { useCan } from '../auth/useCan'
+import { workloadCanCheck } from './workloadPermissions'
 
 interface Props {
   cluster: string
@@ -44,25 +45,31 @@ export default function WorkloadActions({ cluster, gvr, namespace, item, onChang
   const [diff, setDiff] = useState('')
   const [busy, setBusy] = useState(false)
 
+  const scaleCheck = workloadCanCheck('scale')
+  const restartCheck = workloadCanCheck('restart')
+  const updateCheck = workloadCanCheck('rollback')
   const scaleCan = useCan({
     cluster,
     gvr,
     namespace,
-    verb: 'scale',
+    verb: scaleCheck.verb,
+    subresource: scaleCheck.subresource,
     enabled: supportsScaleResource(gvr),
   })
   const restartCan = useCan({
     cluster,
     gvr,
     namespace,
-    verb: 'restart',
+    verb: restartCheck.verb,
+    subresource: restartCheck.subresource,
     enabled: supportsRestartResource(gvr),
   })
   const updateCan = useCan({
     cluster,
     gvr,
     namespace,
-    verb: 'update',
+    verb: updateCheck.verb,
+    subresource: updateCheck.subresource,
     enabled: supportsRollbackResource(gvr),
   })
 

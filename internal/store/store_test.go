@@ -3,7 +3,10 @@ package store
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
+	"path"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -75,8 +78,16 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppliedMigrations: %v", err)
 	}
-	want := []string{"0001_init", "0002_audit_partitions", "0003_audit_hash"}
-	if strings.Join(versions, ",") != strings.Join(want, ",") {
+	// 从嵌入的迁移文件推导期望列表，避免新增迁移后测试断言过期。
+	files, err := fs.Glob(migrationsFS, "migrations/*.sql")
+	if err != nil {
+		t.Fatalf("glob migrations: %v", err)
+	}
+	want := make([]string, 0, len(files))
+	for _, file := range files {
+		want = append(want, strings.TrimSuffix(path.Base(file), ".sql"))
+	}
+	if !slices.Equal(versions, want) {
 		t.Fatalf("applied migrations = %v, want %v", versions, want)
 	}
 

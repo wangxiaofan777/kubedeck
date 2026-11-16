@@ -65,6 +65,9 @@ openssl rand -base64 32
 - Redirect URI：`https://kubedeck.example.com/auth/callback`
 - Scopes：`openid profile email groups`
 - 需要把用户所属组映射到 `groups` claim（KubeDeck 用它做 Impersonate-Group）。
+- ID Token 携带 `email` 时，默认要求 `email_verified=true`；否则登录会被拒绝，避免把未验证邮箱当作集群身份。
+
+`groups` claim 会先去空白、去重并限制数量（最多 64 个，单个最多 256 字符），异常值不会进入 impersonation。
 
 必填配置：
 
@@ -75,6 +78,8 @@ openssl rand -base64 32
 | `config.oidc.redirectUrl` | 上面的回调地址 |
 | `secrets.oidcClientSecret` | client secret |
 | `config.allowedOrigins` | 仅跨域部署时填写，逗号分隔；不要使用 `*` |
+
+如果 IdP 不返回 `email_verified`，登录会失败。确认该 IdP 的邮箱可信后，可在 Secret/环境变量中显式设置 `KUBEDECK_OIDC_ALLOW_UNVERIFIED_EMAIL=true` 放宽；这是受控例外，建议在安全评审中记录原因。不要把它当作默认值。
 
 ## 5. 准备 Secret
 
@@ -105,6 +110,8 @@ helm template kubedeck deploy/helm/kubedeck \
 
 kubectl apply --dry-run=server -f /tmp/kubedeck.yaml
 ```
+
+当前会话与 OIDC 访问令牌只保存在进程内存中，因此 chart 强制 `replicaCount: 1`；设置为大于 1 时 `helm template`/`helm install` 会直接失败并说明原因。需要多副本前必须先实现共享会话存储。
 
 安装：
 
@@ -252,5 +259,7 @@ helm rollback kubedeck <revision> -n kubedeck-system --wait
 - 目标集群平台 SA 只有 `impersonate`，没有 `cluster-admin`。
 - 生产 `cookieInsecure=false`，入口必须 HTTPS。
 - 不要启用 `dev.enabled`；dev 模式跳过 OIDC 和权限校验。
+- 确认 IdP 返回 `email_verified=true`；只有受控例外才设置 `KUBEDECK_OIDC_ALLOW_UNVERIFIED_EMAIL=true`。
+- 保持 `replicaCount: 1`；会话存储未共享前不要横向扩容。
 - Ingress 只暴露 443；数据库不对公网开放。
 - 定期检查审计哈希链与备份恢复演练。

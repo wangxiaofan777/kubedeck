@@ -197,6 +197,13 @@ export interface RoleBinding {
   roleCode: string
 }
 
+export interface AuthModeResponse {
+  mode: 'oidc' | 'dev' | 'unconfigured'
+  issuer?: string
+  devUser?: string
+  loginUrl: string
+}
+
 export interface MeResponse {
   user: {
     userId: number
@@ -453,6 +460,14 @@ function query(params: Record<string, unknown>): string {
 }
 
 export const api = {
+  authMode(signal?: AbortSignal): Promise<AuthModeResponse> {
+    return request<AuthModeResponse>('/auth/mode', { signal })
+  },
+
+  devLogin(): Promise<{ user: unknown }> {
+    return request<{ user: unknown }>('/auth/dev-login', { method: 'POST' })
+  },
+
   me(signal?: AbortSignal): Promise<MeResponse> {
     return request<MeResponse>('/api/v1/auth/me', { signal })
   },

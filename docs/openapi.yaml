@@ -47,6 +47,24 @@ paths:
           content:
             text/plain:
               schema: { type: string }
+  /auth/mode:
+    get:
+      tags: [auth]
+      summary: 探测登录方式
+      security: []
+      responses:
+        "200":
+          description: 当前登录模式与可公开提示
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mode, loginUrl]
+                properties:
+                  mode: { type: string, enum: [oidc, dev, unconfigured] }
+                  issuer: { type: string }
+                  devUser: { type: string }
+                  loginUrl: { type: string }
   /auth/login:
     get:
       tags: [auth]
@@ -58,6 +76,22 @@ paths:
           schema: { type: string }
       responses:
         "302": { description: redirect to IdP }
+  /auth/dev-login:
+    post:
+      tags: [auth]
+      summary: 开发模式显式登录
+      security: []
+      responses:
+        "200":
+          description: 已建立开发会话
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: object
+        "404": { $ref: "#/components/responses/Error" }
   /auth/callback:
     get:
       tags: [auth]

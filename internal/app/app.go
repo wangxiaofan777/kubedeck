@@ -256,11 +256,12 @@ func buildAuth(ctx context.Context, cfg config.Config, st *store.Store, logger *
 	}
 
 	provider, err := auth.NewProvider(ctx, auth.OIDCConfig{
-		Issuer:       cfg.OIDCIssuer,
-		ClientID:     cfg.OIDCClientID,
-		ClientSecret: cfg.OIDCClientSecret,
-		RedirectURL:  cfg.OIDCRedirectURL,
-		Scopes:       cfg.OIDCScopes,
+		Issuer:               cfg.OIDCIssuer,
+		ClientID:             cfg.OIDCClientID,
+		ClientSecret:         cfg.OIDCClientSecret,
+		RedirectURL:          cfg.OIDCRedirectURL,
+		Scopes:               cfg.OIDCScopes,
+		AllowUnverifiedEmail: cfg.OIDCAllowUnverifiedEmail,
 	})
 	if err != nil {
 		return nil, nil, err

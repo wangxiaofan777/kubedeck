@@ -139,12 +139,17 @@
 
 ### Requirement: 任务承载面
 
-创建、编辑、批量删除、扩缩容、回滚等任务 SHALL 在独立页面或右侧 Drawer 中完成；MUST NOT 在列表页或详情页上叠加多层 Modal。危险操作确认 SHALL 展示受影响对象清单或影响范围。
+创建、编辑、YAML 比较、批量删除、扩缩容、回滚等任务 SHALL 在独立页面中完成；MUST NOT 在列表页或详情页上叠加多层 Modal，也 MUST NOT 把多个互不相关的任务塞进同一页面的 Tabs。危险操作确认 SHALL 展示受影响对象清单或影响范围。
 
 #### Scenario: 新建资源
 
 - **WHEN** 用户点击新建
-- **THEN** 系统 SHALL 打开独立创建页面或宽 Drawer，提供表单与 YAML 两种模式
+- **THEN** 系统 SHALL 打开独立创建流程，配置、YAML 与确认各自具备独立步骤页
+
+#### Scenario: 编辑 YAML
+
+- **WHEN** 用户从资源详情进入 YAML 编辑
+- **THEN** 系统 SHALL 打开独立的 YAML 编辑页；比较与提交 SHALL 在独立的比较页完成
 
 #### Scenario: 批量删除
 
@@ -215,3 +220,103 @@
 
 - **WHEN** 列表在后台自动刷新
 - **THEN** 表格 MUST NOT 出现全屏 loading 遮罩或内容闪烁
+
+### Requirement: 资源详情子视图路由
+
+资源详情 SHALL 把概览、YAML 编辑、变更比较、事件、日志与关联 Pod 拆分为独立子视图，每个子视图 MUST 具备可分享的独立地址与页面标题。子视图之间 SHALL 通过详情页子导航切换，MUST NOT 依赖同一页面内的 Tabs 承载全部任务。
+
+#### Scenario: 直接打开 YAML 子视图
+
+- **WHEN** 用户直接访问某 Deployment 的 YAML 子视图地址
+- **THEN** 系统 SHALL 加载该 Deployment 的 YAML 编辑页，面包屑与页面标题 SHALL 还原为「集群 / 命名空间 / Deployments / 对象名 / YAML」
+
+#### Scenario: 从概览进入比较
+
+- **WHEN** 用户在 YAML 子视图修改内容并触发比较
+- **THEN** 系统 SHALL 进入独立的变更比较子视图，地址 SHALL 反映比较页，浏览器后退 SHALL 回到 YAML 编辑页
+
+#### Scenario: 不适用子视图
+
+- **WHEN** 当前资源不是 Pod
+- **THEN** 详情子导航 MUST NOT 展示日志入口；当前资源没有可匹配的关联 Pod 时 MUST NOT 展示关联 Pod 入口
+
+### Requirement: YAML 编辑与比较分离
+
+YAML 编辑子视图 SHALL 只负责编辑与保存草稿；变更比较子视图 SHALL 负责展示原对象与草稿的 Diff、不可变字段提示、dryRun 与提交。用户未经过比较子视图时 MUST NOT 直接提交变更。
+
+#### Scenario: 保存草稿并比较
+
+- **WHEN** 用户在 YAML 编辑页点击“比较变更”
+- **THEN** 系统 SHALL 保存当前草稿并进入比较页，比较页 SHALL 展示 Diff 与不可变字段提示
+
+#### Scenario: 没有草稿直接打开比较页
+
+- **WHEN** 用户直接访问比较页且本次编辑没有草稿
+- **THEN** 系统 SHALL 展示“没有待比较的修改”状态，并提供返回 YAML 编辑页的入口，MUST NOT 提交任何内容
+
+#### Scenario: 放弃草稿
+
+- **WHEN** 用户从比较页返回编辑页并选择放弃修改
+- **THEN** 系统 SHALL 清除本次草稿并恢复为服务端最新内容
+
+### Requirement: 创建流程步骤化
+
+新建资源 SHALL 拆分为配置、YAML 与确认三个步骤页；每个步骤 MUST 具备独立地址，用户 SHALL 能在步骤之间前进与后退。步骤之间 SHALL 保留已填写的表单与 YAML 草稿；关闭或完成创建后 SHALL 清除草稿。
+
+#### Scenario: 从配置进入 YAML
+
+- **WHEN** 用户在配置步骤填写名称与镜像后进入 YAML 步骤
+- **THEN** YAML 步骤 SHALL 展示由表单生成的清单，用户 SHALL 能继续编辑
+
+#### Scenario: 从 YAML 返回配置
+
+- **WHEN** 用户在 YAML 步骤修改后返回配置步骤
+- **THEN** 可映射字段 SHALL 回填到表单，无法映射的字段 SHALL 保留在草稿中并在确认步骤提示
+
+#### Scenario: 确认后创建
+
+- **WHEN** 用户在确认步骤提交
+- **THEN** 系统 SHALL 先执行服务端 dryRun，通过后创建对象并跳转到新对象详情；创建成功后 MUST 清除本次草稿
+
+#### Scenario: 刷新页面
+
+- **WHEN** 用户在创建步骤中刷新浏览器
+- **THEN** 系统 SHALL 从本次创建草稿恢复已填写内容；草稿不存在时 SHALL 从第一步重新开始
+
+### Requirement: 状态语义判定
+
+状态徽标的颜色判定 SHALL 优先识别失败与危险状态，再识别进行中与成功状态。包含 `NotReady`、`CrashLoopBackOff`、`ImagePullBackOff`、`Evicted`、`Failed` 等子串的状态 MUST 展示为危险色，MUST NOT 因状态文本同时包含 `Ready` 或 `Complete` 等成功关键词而被判为成功。
+
+#### Scenario: NotReady 容器
+
+- **WHEN** 容器状态为 `NotReady`
+- **THEN** 状态徽标 SHALL 使用危险色，并保留可读的状态文本
+
+#### Scenario: 正常状态
+
+- **WHEN** 状态为 `Running` 或 `Ready`
+- **THEN** 状态徽标 SHALL 使用成功色
+
+#### Scenario: 未知状态
+
+- **WHEN** 状态文本不匹配任何已知规则
+- **THEN** 状态徽标 SHALL 使用中性色，而不是默认成功色
+
+### Requirement: 上下文切换一致性
+
+集群列表在接入或删除集群后 SHALL 使集群缓存失效。用户切换集群时 SHALL 进入新集群的总览页，MUST NOT 保留旧集群的对象详情路径、对象名称或命名空间查询参数；用户随后可自行选择新集群中的目标资源。
+
+#### Scenario: 接入集群后打开设置
+
+- **WHEN** 用户完成集群接入并被导航到设置页
+- **THEN** 集群缓存 SHALL 已刷新，页面 MUST NOT 展示“集群不存在”
+
+#### Scenario: 删除集群后返回列表
+
+- **WHEN** 用户删除当前集群并返回集群列表
+- **THEN** 列表 SHALL 不再展示已删除集群
+
+#### Scenario: 切换集群
+
+- **WHEN** 用户从 Pod 详情页切换到另一个集群
+- **THEN** 浏览器 SHALL 进入新集群的总览页，MUST NOT 尝试打开新集群中同名的 Pod 或旧命名空间

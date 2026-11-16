@@ -164,6 +164,29 @@ func TestLoadAppliesDevPlatformAdmin(t *testing.T) {
 	}
 }
 
+func TestLoadAppliesOIDCAllowUnverifiedEmail(t *testing.T) {
+	t.Setenv("KUBEDECK_CONFIG", "")
+	t.Setenv("KUBEDECK_DEV_KUBECONFIG", "/tmp/kubeconfig")
+	t.Setenv("KUBEDECK_OIDC_ALLOW_UNVERIFIED_EMAIL", "TRUE")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.OIDCAllowUnverifiedEmail {
+		t.Fatal("OIDCAllowUnverifiedEmail should be true")
+	}
+}
+
+func TestLoadRejectsInvalidOIDCAllowUnverifiedEmail(t *testing.T) {
+	t.Setenv("KUBEDECK_CONFIG", "")
+	t.Setenv("KUBEDECK_OIDC_ALLOW_UNVERIFIED_EMAIL", "yes")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for invalid OIDC_ALLOW_UNVERIFIED_EMAIL value")
+	}
+}
+
 func TestLoadRejectsInvalidDevPlatformAdmin(t *testing.T) {
 	t.Setenv("KUBEDECK_CONFIG", "")
 	t.Setenv("KUBEDECK_DEV_PLATFORM_ADMIN", "yes")

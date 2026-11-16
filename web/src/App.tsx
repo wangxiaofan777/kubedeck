@@ -1,4 +1,4 @@
-import { Navigate, Outlet, Route, Routes, Link } from 'react-router-dom'
+import { Navigate, Outlet, Route, Routes, Link, useLocation } from 'react-router-dom'
 import { Button, Spin } from 'antd'
 import { useAuth } from './app/AuthProvider'
 import ConsoleShell from './app/ConsoleShell'
@@ -6,8 +6,17 @@ import { useClusters } from './features/clusters/useClusters'
 import { ApiError } from './lib/api'
 import LoginPage from './features/auth/LoginPage'
 import ResourcesPage from './features/resources/ResourcesPage'
-import ResourceDetailPage from './features/resources/ResourceDetailPage'
-import CreateResourcePage from './features/resources/CreateResourcePage'
+import ResourceDetailLayout from './features/resources/ResourceDetailLayout'
+import ResourceOverviewPage from './features/resources/ResourceOverviewPage'
+import ResourceYamlPage from './features/resources/ResourceYamlPage'
+import ResourceDiffPage from './features/resources/ResourceDiffPage'
+import ResourceEventsPage from './features/resources/ResourceEventsPage'
+import ResourceLogsPage from './features/resources/ResourceLogsPage'
+import ResourcePodsPage from './features/resources/ResourcePodsPage'
+import CreateResourceLayout from './features/resources/CreateResourceLayout'
+import CreateFormStep from './features/resources/CreateFormStep'
+import CreateYamlStep from './features/resources/CreateYamlStep'
+import CreateReviewStep from './features/resources/CreateReviewStep'
 import AuditPage from './features/audit/AuditPage'
 import OverviewPage from './features/overview/OverviewPage'
 import NodesPage from './features/nodes/NodesPage'
@@ -20,6 +29,7 @@ import { ErrorState } from './components/StateViews'
 
 function RequireAuth() {
   const { loading, error } = useAuth()
+  const location = useLocation()
   if (loading) {
     return (
       <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh' }}>
@@ -28,7 +38,8 @@ function RequireAuth() {
     )
   }
   if (error instanceof ApiError && error.code === 'UNAUTHENTICATED') {
-    return <LoginPage />
+    const returnTo = `${location.pathname}${location.search}`
+    return <Navigate to={`/login?returnTo=${encodeURIComponent(returnTo)}`} replace />
   }
   if (error) {
     return (
@@ -93,14 +104,25 @@ export default function App() {
             <Route path="/clusters/:cluster/overview" element={<OverviewPage />} />
             <Route path="/clusters/:cluster/nodes" element={<NodesPage />} />
             <Route path="/clusters/:cluster/nodes/:name" element={<NodeDetailPage />} />
-            <Route path="/clusters/:cluster/new/:typeKey" element={<CreateResourcePage />} />
+            <Route path="/clusters/:cluster/new/:typeKey" element={<CreateResourceLayout />}>
+              <Route index element={<CreateFormStep />} />
+              <Route path="yaml" element={<CreateYamlStep />} />
+              <Route path="review" element={<CreateReviewStep />} />
+            </Route>
             <Route path="/clusters/:cluster/settings" element={<ClusterSettingsPage />} />
             <Route path="/clusters/:cluster/audit" element={<AuditPage />} />
             <Route path="/clusters/:cluster/:typeKey" element={<ResourcesPage />} />
             <Route
               path="/clusters/:cluster/:typeKey/:namespace/:name"
-              element={<ResourceDetailPage />}
-            />
+              element={<ResourceDetailLayout />}
+            >
+              <Route index element={<ResourceOverviewPage />} />
+              <Route path="yaml" element={<ResourceYamlPage />} />
+              <Route path="diff" element={<ResourceDiffPage />} />
+              <Route path="events" element={<ResourceEventsPage />} />
+              <Route path="logs" element={<ResourceLogsPage />} />
+              <Route path="pods" element={<ResourcePodsPage />} />
+            </Route>
             <Route path="/no-cluster" element={<NoCluster />} />
           </Route>
         </Route>

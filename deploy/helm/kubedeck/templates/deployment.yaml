@@ -1,3 +1,6 @@
+{{- if gt (int .Values.replicaCount) 1 }}
+{{- fail "KubeDeck stores sessions and OIDC access tokens in process memory; replicaCount must be 1 until a shared session store is implemented" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

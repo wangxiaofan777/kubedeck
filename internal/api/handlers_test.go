@@ -191,6 +191,13 @@ type fakeAuth struct {
 }
 
 func (f fakeAuth) DevMode() bool { return f.dev }
+func (f fakeAuth) Mode() string {
+	if f.dev {
+		return "dev"
+	}
+	return "oidc"
+}
+func (f fakeAuth) Issuer() string { return "https://issuer.example" }
 func (f fakeAuth) DevIdentity() (auth.Identity, bool) {
 	return f.identity, f.dev
 }

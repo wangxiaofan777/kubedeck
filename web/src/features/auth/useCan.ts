@@ -20,12 +20,23 @@ export function useCan(params: {
   gvr: GVR
   namespace?: string
   verb: Verb
+  subresource?: string
   name?: string
   enabled?: boolean
 }) {
-  const { cluster, gvr, namespace, verb, name, enabled = true } = params
+  const { cluster, gvr, namespace, verb, subresource, name, enabled = true } = params
   const query = useQuery({
-    queryKey: ['can', cluster, gvr.group, gvr.version, gvr.resource, namespace, verb, name],
+    queryKey: [
+      'can',
+      cluster,
+      gvr.group,
+      gvr.version,
+      gvr.resource,
+      namespace,
+      verb,
+      subresource,
+      name,
+    ],
     queryFn: ({ signal }) =>
       api.can(
         [
@@ -36,6 +47,7 @@ export function useCan(params: {
             group: gvr.group,
             version: gvr.version,
             resource: gvr.resource,
+            subresource,
             name,
           },
         ],

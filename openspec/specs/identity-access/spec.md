@@ -178,3 +178,116 @@
 
 - **WHEN** `developer` 在绑定命名空间内创建资源且目标集群 RBAC 允许
 - **THEN** 请求 SHALL 正常执行
+
+### Requirement: 登录方式探测
+
+系统 SHALL 提供无需认证的登录方式探测能力，返回当前部署的登录模式（OIDC、开发模式或未配置）以及可安全公开的登录提示信息。该响应 MUST NOT 包含客户端密钥、会话、令牌或任何集群凭据。
+
+#### Scenario: OIDC 模式
+
+- **WHEN** 浏览器在未登录状态请求登录方式
+- **THEN** 系统 SHALL 返回 `oidc` 模式与可用的登录入口，登录页 SHALL 渲染 OIDC 登录按钮
+
+#### Scenario: 开发模式
+
+- **WHEN** 浏览器在未登录状态请求登录方式，且服务端启用了开发模式
+- **THEN** 系统 SHALL 返回 `dev` 模式与开发身份提示，登录页 SHALL 渲染开发登录入口，MUST NOT 自动建立会话
+
+#### Scenario: 未配置登录方式
+
+- **WHEN** 服务端既未配置 OIDC 也未启用开发模式
+- **THEN** 系统 SHALL 返回 `unconfigured` 模式，登录页 SHALL 展示配置缺失说明与管理员处理建议，MUST NOT 渲染无效的登录按钮
+
+### Requirement: 开发模式显式登录
+
+开发模式 SHALL 要求用户通过显式操作建立本地会话；未完成该操作前，受保护接口 MUST 返回 `UNAUTHENTICATED`。开发登录 MUST 仅在开发模式启用时可用，且 MUST 使用与其他会话相同的 HttpOnly、SameSite=Lax Cookie 规则。
+
+#### Scenario: 未登录访问受保护接口
+
+- **WHEN** 开发模式下浏览器尚未建立会话就请求受保护接口
+- **THEN** 系统 SHALL 返回 401 `UNAUTHENTICATED`，MUST NOT 隐式创建会话
+
+#### Scenario: 完成开发登录
+
+- **WHEN** 用户在开发模式登录页点击开发登录
+- **THEN** 系统 SHALL 建立本地会话并返回当前开发身份，后续请求 SHALL 携带该会话
+
+#### Scenario: 非开发模式调用开发登录
+
+- **WHEN** OIDC 模式或未配置模式下调用开发登录接口
+- **THEN** 系统 SHALL 返回 404 或 403，MUST NOT 建立任何会话
+
+### Requirement: 未登录重定向
+
+控制台受保护路由 SHALL 在未登录时重定向到登录页，并携带原始站内地址作为 `returnTo`。登录成功后 SHALL 返回该地址；`returnTo` MUST 只接受站内相对路径，外部地址 MUST 被拒绝。
+
+#### Scenario: 打开受保护深链接
+
+- **WHEN** 未登录用户直接打开某个资源详情链接
+- **THEN** 浏览器 SHALL 被重定向到 `/login?returnTo=<原地址>`，登录成功后 SHALL 回到该资源详情
+
+#### Scenario: 外部 returnTo
+
+- **WHEN** 登录请求携带指向外部站点的 `returnTo`
+- **THEN** 系统 SHALL 忽略该值并回到控制台首页，MUST NOT 跳转到外部站点
+
+### Requirement: 操作动作的预检动词映射
+
+界面在预检“伸缩、重启、回滚、暂停/恢复、驱逐”等平台动作时，MUST 使用目标集群真实存在的 RBAC 动词与子资源，不得把平台动作名直接作为 SSAR 动词。映射至少满足：
+
+- 伸缩：对工作负载检查 `update`，子资源 `scale`
+- 重启、回滚、暂停/恢复：对工作负载检查 `patch`
+- Pod 驱逐：对 Pod 检查 `create`，子资源 `eviction`
+
+平台角色仍 SHALL 先约束写操作；映射后的预检结果只用于界面展示，服务端写请求仍 MUST 由平台准入与 apiserver RBAC 再次判定。
+
+#### Scenario: 合法编辑者看到伸缩入口
+
+- **WHEN** 用户拥有目标 Deployment 的 `update`/`deployments/scale` 权限
+- **THEN** 伸缩入口 SHALL 可见且可点击，MUST NOT 因使用不存在的 `scale` 动词而被隐藏
+
+#### Scenario: 合法编辑者看到重启入口
+
+- **WHEN** 用户拥有目标工作负载的 `patch` 权限
+- **THEN** 重启、历史与回滚入口 SHALL 可见
+
+#### Scenario: 驱逐权限
+
+- **WHEN** 用户拥有 Pod 的 `create`/`pods/eviction` 权限
+- **THEN** 驱逐入口 SHALL 可见，点击后服务端仍 SHALL 以真实权限再次校验
+
+#### Scenario: 只读用户
+
+- **WHEN** 用户只有目标资源的 `get`/`list` 权限
+- **THEN** 上述写操作入口 SHALL 保持隐藏或禁用
+
+### Requirement: OIDC 身份声明校验
+
+平台在建立登录会话前 SHALL 校验 ID Token 的身份声明。当 ID Token 携带非空 `email` 且未显式配置允许未验证邮箱时，`email_verified` MUST 为 `true`；缺失或为 `false` 时登录 MUST 失败，MUST NOT 建立会话或把该邮箱作为集群身份。
+
+平台 MUST 在把 `groups` 声明用于会话与 Kubernetes impersonation 前完成规范化：去除首尾空白、丢弃空值、去重，并限制组数量与单个组名长度。规范化后的组 SHALL 保持首次出现顺序。
+
+#### Scenario: 邮箱已验证
+
+- **WHEN** IdP 返回 `email` 且 `email_verified=true`
+- **THEN** 平台 SHALL 建立会话，并以该邮箱作为 `Impersonate-User`
+
+#### Scenario: 邮箱明确未验证
+
+- **WHEN** IdP 返回 `email` 且 `email_verified=false`
+- **THEN** 登录 SHALL 失败并返回可定位的认证错误，MUST NOT 建立会话
+
+#### Scenario: IdP 未返回验证状态
+
+- **WHEN** IdP 返回 `email` 但没有 `email_verified` 声明
+- **THEN** 默认配置下登录 SHALL 失败；仅当部署显式允许未验证邮箱时才 SHALL 继续
+
+#### Scenario: 组声明包含空值与重复项
+
+- **WHEN** IdP 的 `groups` 声明包含空白、空字符串或重复组名
+- **THEN** 平台 SHALL 仅保留去空白、去重后的非空组名，并用于 `Impersonate-Group`
+
+#### Scenario: 组声明超过上限
+
+- **WHEN** IdP 返回的组数量或单个组名长度超过平台上限
+- **THEN** 平台 SHALL 丢弃超出部分并记录告警，MUST NOT 把未经限制的声明发送到目标集群

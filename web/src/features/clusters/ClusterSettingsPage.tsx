@@ -168,6 +168,7 @@ export default function ClusterSettingsPage() {
     setDeleting(true)
     try {
       await api.deleteCluster(name, deleteConfirm)
+      await queryClient.invalidateQueries({ queryKey: ['clusters'] })
       message.success('集群已移除')
       navigate('/clusters')
     } catch (error) {

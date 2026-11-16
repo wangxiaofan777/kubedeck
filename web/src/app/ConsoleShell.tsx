@@ -54,6 +54,7 @@ export default function ConsoleShell() {
   const isSettings = location.pathname.endsWith('/settings')
   const isCreate = location.pathname.includes('/new/')
   const isAdminPage = location.pathname === '/clusters' || location.pathname === '/clusters/new'
+  const isHome = location.pathname === '/'
   const isDetail = !!params.name && !isNodes
 
   const clusterWide = useMemo(
@@ -240,11 +241,8 @@ export default function ConsoleShell() {
     !isCreate
 
   const switchCluster = (name: string) => {
-    const oldBase = `/clusters/${encodeURIComponent(params.cluster ?? '')}`
-    const suffix = location.pathname.startsWith(oldBase)
-      ? location.pathname.slice(oldBase.length)
-      : '/overview'
-    navigate(`/clusters/${encodeURIComponent(name)}${suffix}${location.search}`)
+    // 切换集群时不保留旧对象路径与命名空间，避免打开新集群中不存在的资源。
+    navigate(`/clusters/${encodeURIComponent(name)}/overview`)
   }
 
   const clusterMenu: MenuProps['items'] = [
@@ -458,7 +456,7 @@ export default function ConsoleShell() {
               </div>
             )}
 
-            {!cluster && !isAdminPage ? (
+            {!cluster && !isAdminPage && !isHome ? (
               clustersQuery.isLoading ? (
                 <Spin />
               ) : clusters.length === 0 ? (

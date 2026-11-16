@@ -13,7 +13,7 @@ kubectl -n kubedeck-system get pods
 
 ## 2. 登录
 
-开发模式下首次 API 请求自动建立本地会话，页面显示“开发模式 / Local Developer”，平台管理员范围。生产 OIDC 登录需在真实 IdP 上按 [deployment.md](./deployment.md) 验证。
+开发模式不再自动建立会话：打开控制台会跳转到 `/login`，点击“以本地身份进入”后建立本地会话，页面显示“开发模式 / Local Developer”，平台管理员范围。未登录直接访问受保护链接会跳转登录页，并在登录后回到原地址。生产 OIDC 登录需在真实 IdP 上按 [deployment.md](./deployment.md) 验证。
 
 ## 3. 接入集群
 

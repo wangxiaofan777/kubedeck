@@ -419,6 +419,40 @@ body {
   align-items: start;
 }
 
+/* 详情子视图导航：路由级页面切换，不使用 Tabs 隐藏面板。 */
+.kd-subnav {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--kd-border);
+  overflow-x: auto;
+}
+
+.kd-subnav-item {
+  padding: 9px 14px;
+  font-size: 13px;
+  color: #475569;
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.kd-subnav-item:hover {
+  color: #2563eb;
+  background: #f8fafc;
+}
+
+.kd-subnav-item.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+  font-weight: 600;
+}
+
+.kd-subnav-item:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
 .kd-rail {
   position: sticky;
   top: 76px;

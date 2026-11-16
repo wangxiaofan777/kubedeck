@@ -139,6 +139,14 @@ func TestTimeout_SkipsLongLivedRequests(t *testing.T) {
 	if recFollow.Header().Get("X-Alive") != "1" {
 		t.Fatal("log follow request should be exempt from the request timeout")
 	}
+
+	drain := httptest.NewRequest(http.MethodPost,
+		"/api/v1/clusters/local/nodes/worker-1/drain", nil)
+	recDrain := httptest.NewRecorder()
+	h.ServeHTTP(recDrain, drain)
+	if recDrain.Header().Get("X-Alive") != "1" {
+		t.Fatal("drain request should be exempt from the generic request timeout")
+	}
 }
 
 func TestCORS_AllowedOrigin(t *testing.T) {

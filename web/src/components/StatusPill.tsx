@@ -1,9 +1,20 @@
 type Tone = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
 const RULES: Array<{ pattern: RegExp; tone: Tone }> = [
-  { pattern: /(running|ready|succeeded|active|healthy|available|normal|complete)/i, tone: 'success' },
-  { pattern: /(pending|progressing|containercreating|terminating|updating|degraded|unknown)/i, tone: 'warning' },
-  { pattern: /(failed|error|crashloop|notready|unreachable|imagepull|evicted|disabled)/i, tone: 'danger' },
+  // 先判危险状态：NotReady 也包含 "ready"，不能被成功规则抢先命中。
+  {
+    pattern:
+      /(failed|error|crashloop|notready|unreachable|imagepull|errimagepull|evicted|disabled|oomkilled)/i,
+    tone: 'danger',
+  },
+  {
+    pattern: /(pending|progressing|containercreating|terminating|updating|degraded|unknown)/i,
+    tone: 'warning',
+  },
+  {
+    pattern: /(running|ready|succeeded|active|healthy|available|normal|complete)/i,
+    tone: 'success',
+  },
   { pattern: /(external|loadbalancer|nodeport|created|info)/i, tone: 'info' },
 ]
 

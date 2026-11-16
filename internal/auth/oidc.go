@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -17,16 +18,23 @@ type OIDCClaims struct {
 	Name          string   `json:"name"`
 	Username      string   `json:"preferred_username"`
 	Groups        []string `json:"groups"`
-	EmailVerified bool     `json:"email_verified"`
+	EmailVerified *bool    `json:"email_verified"`
 }
+
+const (
+	maxOIDCGroups   = 64
+	maxOIDCGroupLen = 256
+)
 
 // Provider 封装 OIDC discovery、授权码交换与 ID Token 校验。
 type Provider struct {
-	issuer   string
-	clientID string
-	oauth    *oauth2.Config
-	verifier *oidc.IDTokenVerifier
-	raw      *oidc.Provider
+	issuer              string
+	clientID            string
+	oauth               *oauth2.Config
+	verifier            *oidc.IDTokenVerifier
+	raw                 *oidc.Provider
+	allowUnverifiedMail bool
+	logger              *slog.Logger
 }
 
 // OIDCConfig 是构造 Provider 所需配置。
@@ -36,6 +44,9 @@ type OIDCConfig struct {
 	ClientSecret string
 	RedirectURL  string
 	Scopes       []string
+	// AllowUnverifiedEmail 允许 ID Token 中 email_verified 缺失或为 false 时继续登录。
+	// 默认 false：IdP 明确返回未验证邮箱时拒绝建立会话。
+	AllowUnverifiedEmail bool
 }
 
 // NewProvider 执行 OIDC discovery。IdP 不可达时启动失败，避免带病运行。
@@ -52,10 +63,12 @@ func NewProvider(ctx context.Context, cfg OIDCConfig) (*Provider, error) {
 		return nil, fmt.Errorf("auth: discover oidc provider %q: %w", cfg.Issuer, err)
 	}
 	return &Provider{
-		issuer:   cfg.Issuer,
-		clientID: cfg.ClientID,
-		raw:      raw,
-		verifier: raw.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
+		issuer:              cfg.Issuer,
+		clientID:            cfg.ClientID,
+		raw:                 raw,
+		verifier:            raw.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
+		allowUnverifiedMail: cfg.AllowUnverifiedEmail,
+		logger:              slog.Default(),
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -99,11 +112,69 @@ func (p *Provider) Exchange(ctx context.Context, code, codeVerifier, nonce strin
 	if claims.Subject == "" {
 		return OIDCClaims{}, "", errors.New("auth: id_token has empty subject")
 	}
+	if err := p.validateEmail(claims); err != nil {
+		return OIDCClaims{}, "", err
+	}
+	claims.Groups = p.cleanGroups(claims.Groups)
 	if claims.Email == "" {
 		// 部分 IdP 只在 userinfo 返回 email；缺失时退回 preferred_username。
 		claims.Email = claims.Username
 	}
 	return claims, token.AccessToken, nil
+}
+
+// validateEmail 在默认严格模式下拒绝未验证或缺少验证状态的邮箱。
+// 没有 email 时身份退回 subject，不适用邮箱验证。
+func (p *Provider) validateEmail(claims OIDCClaims) error {
+	if p.allowUnverifiedMail || claims.Email == "" {
+		return nil
+	}
+	if claims.EmailVerified == nil {
+		return errors.New("auth: id_token email is missing email_verified")
+	}
+	if !*claims.EmailVerified {
+		return errors.New("auth: id_token email is not verified")
+	}
+	return nil
+}
+
+// cleanGroups 去掉异常声明，避免把未经限制的组直接放大到每个集群请求。
+func (p *Provider) cleanGroups(groups []string) []string {
+	cleaned, dropped := normalizeGroups(groups)
+	if dropped > 0 {
+		p.logger.Warn("oidc group claim truncated", "dropped", dropped, "kept", len(cleaned))
+	}
+	return cleaned
+}
+
+func normalizeGroups(groups []string) ([]string, int) {
+	capacity := len(groups)
+	if capacity > maxOIDCGroups {
+		capacity = maxOIDCGroups
+	}
+	out := make([]string, 0, capacity)
+	seen := make(map[string]struct{}, capacity)
+	dropped := 0
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if len(group) > maxOIDCGroupLen {
+			dropped++
+			continue
+		}
+		if _, ok := seen[group]; ok {
+			continue
+		}
+		if len(out) >= maxOIDCGroups {
+			dropped++
+			continue
+		}
+		seen[group] = struct{}{}
+		out = append(out, group)
+	}
+	return out, dropped
 }
 
 // UserInfo 用于会话周期校验；IdP 侧禁用用户后返回 4xx。
@@ -119,6 +190,7 @@ func (p *Provider) UserInfo(ctx context.Context, accessToken string) (OIDCClaims
 	if err := info.Claims(&claims); err != nil {
 		return OIDCClaims{}, fmt.Errorf("auth: decode userinfo: %w", err)
 	}
+	claims.Groups = p.cleanGroups(claims.Groups)
 	if claims.Email == "" {
 		claims.Email = claims.Username
 	}

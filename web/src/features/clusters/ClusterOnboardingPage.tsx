@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Alert, App, Button, Card, Input, Result, Space, Steps, Tag } from 'antd'
 import { CheckCircleOutlined, CloudServerOutlined, LeftOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, type ProbeResult } from '../../lib/api'
 import { useAuth } from '../../app/AuthProvider'
 import PageHeader from '../../components/PageHeader'
@@ -17,6 +18,7 @@ const NAME_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 export default function ClusterOnboardingPage() {
   const { me } = useAuth()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const { message } = App.useApp()
   const [step, setStep] = useState(0)
   const [name, setName] = useState('')
@@ -69,6 +71,7 @@ export default function ClusterOnboardingPage() {
         displayName: displayName || name,
         ...credentialInput(credential),
       })
+      await queryClient.invalidateQueries({ queryKey: ['clusters'] })
       message.success(`已接入集群 ${name}`)
       navigate(`/clusters/${encodeURIComponent(name)}/settings`)
     } catch (err) {

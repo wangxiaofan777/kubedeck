@@ -226,7 +226,7 @@ wsl.exe -d Ubuntu -u root -- bash -lc '
 
 `make server` 只依赖 `internal/webui/dist` 中的占位文件，因此前端未构建时后端也能编译；界面要看到资源列表则需要先执行第 1 步的 `npm run build`。若 WSL 内已安装 Node，可直接用 `make build` 一条命令完成前后端构建。之后只改后端时重复 `make server` 即可。
 
-Windows 浏览器打开 <http://localhost:8080>。前端联调时改用 Vite dev server（`/api` 与 WS 已代理到 8080）：
+Windows 浏览器打开 <http://localhost:8080>。开发模式不会自动建立会话：首次打开会进入登录页，点击“以本地身份进入”完成显式开发登录后再进入控制台。前端联调时改用 Vite dev server（`/api` 与 WS 已代理到 8080）：
 
 ```bash
 cd web && npm run dev   # http://localhost:5173

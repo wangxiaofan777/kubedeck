@@ -89,14 +89,26 @@ users:
 }
 
 func TestCheckMinVersion(t *testing.T) {
-	if err := CheckMinVersion("v1.37.2+k3s1", "1.34"); err != nil {
-		t.Fatalf("valid version rejected: %v", err)
+	cases := []struct {
+		version string
+		min     string
+		ok      bool
+	}{
+		{"v1.18.0", "1.18", true},
+		{"v1.18.16+k3s1", "1.18", true},
+		{"v1.17.9", "1.18", false},
+		{"v1.37.2+k3s1", "1.34", true},
+		{"v1.33.9", "1.34", false},
+		{"not-a-version", "1.34", false},
 	}
-	if err := CheckMinVersion("v1.33.9", "1.34"); err == nil {
-		t.Fatal("old version should be rejected")
-	}
-	if err := CheckMinVersion("not-a-version", "1.34"); err == nil {
-		t.Fatal("unparseable version should be rejected")
+	for _, tc := range cases {
+		err := CheckMinVersion(tc.version, tc.min)
+		if tc.ok && err != nil {
+			t.Errorf("%s against %s rejected: %v", tc.version, tc.min, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("%s against %s should be rejected", tc.version, tc.min)
+		}
 	}
 }
 

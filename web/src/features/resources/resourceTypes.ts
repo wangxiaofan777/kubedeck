@@ -184,15 +184,53 @@ export function resolveType(key: string | undefined): ResourceType | undefined {
   return RESOURCE_TYPES.find((t) => t.key === key)
 }
 
+/** apiVersionOf 把 GVR 还原成 YAML 中的 apiVersion。 */
+export function apiVersionOf(gvr: GVR): string {
+  return gvr.group ? `${gvr.group}/${gvr.version}` : gvr.version
+}
+
+/** versionRank 让稳定版本优先于 beta/alpha，同稳定性下版本号大的优先。 */
+function versionRank(version: string): number {
+  const match = /^v(\d+)(?:(alpha|beta)(\d+))?$/.exec(version)
+  if (!match) return -1
+  const stage = match[2] === undefined ? 3 : match[2] === 'beta' ? 2 : 1
+  return stage * 1_000_000 + Number(match[1]) * 100 + Number(match[3] ?? 0)
+}
+
+/**
+ * preferredResourceType 按集群实际提供的 API 选择可用版本。
+ * 静态表按新版集群编写（如 CronJob batch/v1、Ingress networking.k8s.io/v1），
+ * 1.18–1.20 等旧集群只有 beta 版本，此时回退到同 group/kind 的已服务版本。
+ */
+export function preferredResourceType(
+  type: ResourceType,
+  resources: APIResource[] | undefined,
+): ResourceType {
+  if (!resources?.length) return type
+  const sameKind = resources.filter((r) => r.group === type.gvr.group && r.kind === type.kind)
+  if (sameKind.length === 0) return type
+  if (sameKind.some((r) => r.resource === type.gvr.resource && r.version === type.gvr.version)) {
+    return type
+  }
+  const usable = sameKind.filter((r) => r.verbs.includes('list') || r.verbs.includes('get'))
+  const pool = usable.length > 0 ? usable : sameKind
+  const sameResource = pool.filter((r) => r.resource === type.gvr.resource)
+  const candidates = sameResource.length > 0 ? sameResource : pool
+  const chosen = [...candidates].sort((a, b) => versionRank(b.version) - versionRank(a.version))[0]
+  if (!chosen) return type
+  return {
+    ...type,
+    gvr: { group: chosen.group, version: chosen.version, resource: chosen.resource },
+  }
+}
+
 export function isCreatable(type: ResourceType): boolean {
   return type.creatable !== false
 }
 
 /** createTemplate 只预填身份字段，不生成看似可提交但实际无效的 spec。 */
 export function createTemplate(type: ResourceType, namespace: string): string {
-  const apiVersion = type.gvr.group
-    ? `${type.gvr.group}/${type.gvr.version}`
-    : type.gvr.version
+  const apiVersion = apiVersionOf(type.gvr)
   const lines = [`apiVersion: ${apiVersion}`, `kind: ${type.kind}`, 'metadata:', '  name: ""']
   if (type.namespaced) lines.push(`  namespace: ${namespace}`)
   return `${lines.join('\n')}\n`
@@ -244,12 +282,15 @@ export function resolveCreateTarget(
     return { ok: false, reason: `资源类型 ${kind} 不支持创建` }
   }
 
-  const page = RESOURCE_TYPES.find(
-    (t) =>
-      t.gvr.group === match.group &&
-      t.gvr.version === match.version &&
-      t.gvr.resource === match.resource,
-  )
+  const page =
+    RESOURCE_TYPES.find(
+      (t) =>
+        t.gvr.group === match.group &&
+        t.gvr.version === match.version &&
+        t.gvr.resource === match.resource,
+    ) ??
+    // 旧集群（如 1.18）只有 beta 版本，仍应导航到同一内置页面。
+    RESOURCE_TYPES.find((t) => t.gvr.group === match.group && t.kind === match.kind)
   return {
     ok: true,
     target: {

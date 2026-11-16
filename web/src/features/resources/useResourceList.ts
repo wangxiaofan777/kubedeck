@@ -23,6 +23,9 @@ export function useResourceList(
       'resources',
       cluster,
       type.key,
+      // 版本参与缓存键：旧集群回退到 beta API 后不能复用 v1 的空结果。
+      type.gvr.group,
+      type.gvr.version,
       params.namespace,
       params.labelSelector ?? '',
       params.fieldSelector ?? '',

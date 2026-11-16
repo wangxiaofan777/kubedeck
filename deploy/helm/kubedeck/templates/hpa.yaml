@@ -1,5 +1,10 @@
 {{- if .Values.autoscaling.enabled }}
+{{- /* autoscaling/v2 自 1.23 起提供；1.18–1.22 使用 v2beta2（behavior 在 1.18 已可用）。 */}}
+{{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.Version }}
 apiVersion: autoscaling/v2
+{{- else }}
+apiVersion: autoscaling/v2beta2
+{{- end }}
 kind: HorizontalPodAutoscaler
 metadata:
   name: {{ include "kubedeck.fullname" . }}

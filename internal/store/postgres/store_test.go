@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kubedeck/kubedeck/internal/domain"
 	"github.com/kubedeck/kubedeck/internal/store"
 	"github.com/kubedeck/kubedeck/internal/store/storetest"
 )
@@ -36,6 +38,37 @@ func TestStore(t *testing.T) {
 		PartitionOf:        pgPartitionOf,
 		EnsurePartition:    pgEnsurePartition,
 	})
+}
+
+// TestMinVersionMigrationPreservesCustom 验证 0005 只迁移旧默认值，不覆盖管理员自定义值。
+func TestMinVersionMigrationPreservesCustom(t *testing.T) {
+	url := os.Getenv("KUBEDECK_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("KUBEDECK_TEST_DATABASE_URL not set")
+	}
+	if !strings.Contains(url, "kubedeck_test") {
+		t.Fatalf("refusing to run destructive tests against %q: database name must contain kubedeck_test", url)
+	}
+	ctx := context.Background()
+	st := newTestStore(url)(t).(*Store)
+	if err := st.SetSetting(ctx, domain.SettingMinK8sVersion, "1.24"); err != nil {
+		t.Fatalf("set custom min version: %v", err)
+	}
+	body, err := migrationsFS.ReadFile("migrations/0005_min_version_1_18.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	if _, err := st.Pool().Exec(ctx, string(body)); err != nil {
+		t.Fatalf("replay migration: %v", err)
+	}
+	raw, err := st.GetSetting(ctx, domain.SettingMinK8sVersion)
+	if err != nil {
+		t.Fatalf("get min version: %v", err)
+	}
+	var got string
+	if err := json.Unmarshal(raw, &got); err != nil || got != "1.24" {
+		t.Fatalf("min version after replay = %q, %v; want custom 1.24", raw, err)
+	}
 }
 
 func newTestStore(url string) func(t *testing.T) store.Store {

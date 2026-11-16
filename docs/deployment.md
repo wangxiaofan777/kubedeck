@@ -1,6 +1,6 @@
 # 部署手册
 
-本文说明如何在生产环境部署 KubeDeck。命令默认在能访问目标 Kubernetes 集群的机器上执行，Helm 3.16+、kubectl 1.34+。
+本文说明如何在生产环境部署 KubeDeck。命令默认在能访问目标 Kubernetes 集群的机器上执行，Helm 3.16+、kubectl 1.18+。
 
 > 本地开发与验收环境见 [local-environment.md](./local-environment.md)。不要把本文中的占位符替换成真实凭据后提交到仓库。
 
@@ -27,11 +27,13 @@ Compose 的密钥、备份、WSL/Docker Desktop 网络与故障排查见 [Compos
 
 | 组件 | 要求 |
 |---|---|
-| Kubernetes | 1.34–1.37（低于 1.34 拒绝接入） |
+| Kubernetes | 1.18–1.37（低于 1.18 拒绝接入；1.18–1.20 为 legacy 档） |
 | 数据库 | PostgreSQL 15+（默认）或 MySQL 8.0.20+，数据库 `kubedeck`，独立账号 |
 | OIDC IdP | 支持授权码 + PKCE，能提供 `sub`、`email`、`groups` |
 | 入口 | HTTPS（生产 Cookie 必须 Secure） |
 | 镜像 | 由 `Dockerfile` 构建并推送到私有仓库 |
+
+> **Kubernetes 1.18–1.20（legacy）**：这些版本已 EOL，只做兼容不做安全背书。CronJob 与 Ingress 只有 beta API（前端按 discovery 自动回退），Pod 驱逐自动使用 `policy/v1beta1`，Helm 会按版本渲染 PDB `policy/v1beta1`、HPA `autoscaling/v2beta2`、Ingress `networking.k8s.io/v1beta1`；`topologySpreadConstraints` 需要 1.19+，在 1.18 上显式配置会渲染失败。指标视图依赖兼容 v1beta1 的 metrics-server。目标集群满足升级条件时应优先升级到受支持版本。
 
 KubeDeck 不把集群资源状态写入数据库；数据库只保存平台元数据、角色绑定与审计。请为数据库配置备份与保留策略。
 
@@ -273,7 +275,7 @@ curl -X POST https://kubedeck.example.com/api/v1/clusters \
 rm -f /tmp/register.json platform-sa.kubeconfig
 ```
 
-登记时会探测 `/version` 与 discovery，低于 1.34 或无法连通会返回明确错误且不落库。凭据以 AES-256-GCM 加密存储，接口只返回脱敏元数据。
+登记时会探测 `/version` 与 discovery，低于最低支持版本（默认 1.18，可由 `platform.min_k8s_version` 调整）或无法连通会返回明确错误且不落库。凭据以 AES-256-GCM 加密存储，接口只返回脱敏元数据。
 
 ## 10. 升级与回滚
 

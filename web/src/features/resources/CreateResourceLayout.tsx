@@ -14,7 +14,7 @@ import PageHeader from '../../components/PageHeader'
 import { api, type GVR, type ResourceItem } from '../../lib/api'
 import { useCan } from '../auth/useCan'
 import {
-  buildManifest,
+  buildManifestFor,
   emptyValues,
   FORM_KINDS,
   valuesFromResource,
@@ -24,6 +24,7 @@ import {
 import { clearCreateDraft, createDraftKey, loadCreateDraft, saveCreateDraft } from './createDraft'
 import { resolveType, type ResourceType } from './resourceTypes'
 import { useApiResources } from './useApiResources'
+import { useResourceType } from './useResourceType'
 
 const NAME_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
@@ -110,7 +111,7 @@ export default function CreateResourceLayout() {
   const { message } = App.useApp()
   const namespaceFromQuery = searchParams.get('namespace') ?? ''
   const copyFrom = searchParams.get('copy') ?? ''
-  const type = resolveType(typeKey)
+  const type = useResourceType(cluster, typeKey)
   const kind = (type?.key ?? '') as FormKind
   const formSupported = FORM_KINDS.includes(kind)
   const step = location.pathname.endsWith('/yaml')
@@ -146,7 +147,7 @@ export default function CreateResourceLayout() {
   })
 
   const sourceQuery = useQuery({
-    queryKey: ['copy-source', cluster, type?.key, copyFrom],
+    queryKey: ['copy-source', cluster, type?.key, type?.gvr.group, type?.gvr.version, copyFrom],
     queryFn: ({ signal }) => {
       const [ns, name] = copyFrom.split('/')
       return api.detail({
@@ -171,8 +172,14 @@ export default function CreateResourceLayout() {
 
   const manifest = useMemo(() => {
     if (!formSupported) return undefined
-    return buildManifest(kind, values)
-  }, [formSupported, kind, values])
+    return buildManifestFor(type, values)
+  }, [formSupported, type, values])
+
+  // YAML-only 类型的骨架在资源发现到达后按实际 apiVersion 重建（旧集群为 beta）。
+  useEffect(() => {
+    if (formSupported || !type || yamlDirty || initialDraft) return
+    setCode(skeletonFor(type, namespaceFromQuery))
+  }, [formSupported, type, yamlDirty, initialDraft, namespaceFromQuery])
 
   useEffect(() => {
     if (formSupported && manifest && !yamlDirty) setCode(stringify(manifest))

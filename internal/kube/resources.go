@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -18,6 +19,9 @@ import (
 )
 
 const discoveryTTL = 5 * time.Minute
+
+// evictionVersionTTL 是 Eviction API 版本探测结果的缓存时间。
+const evictionVersionTTL = 5 * time.Minute
 
 // APIResource 是资源目录中的一项。
 type APIResource struct {
@@ -219,9 +223,14 @@ func (t *DirectTransport) Scale(ctx context.Context, gvr schema.GroupVersionReso
 }
 
 // Evict 通过 pods/eviction 子资源驱逐 Pod；PDB 阻止时返回 apiserver 的 429 错误。
+// policy/v1 在 Kubernetes 1.21+ 才提供；1.18–1.20 使用 policy/v1beta1。
 func (t *DirectTransport) Evict(ctx context.Context, namespace, name string, gracePeriodSeconds *int64) error {
+	apiVersion, err := t.evictionAPIVersion(ctx)
+	if err != nil {
+		return err
+	}
 	eviction := map[string]any{
-		"apiVersion": "policy/v1",
+		"apiVersion": apiVersion,
 		"kind":       "Eviction",
 		"metadata":   map[string]any{"name": name, "namespace": namespace},
 	}
@@ -240,6 +249,30 @@ func (t *DirectTransport) Evict(ctx context.Context, namespace, name string, gra
 		Do(ctx).
 		Raw()
 	return err
+}
+
+// evictionAPIVersion 按集群实际提供的 API 选择 policy/v1 或 policy/v1beta1。
+// 结果缓存 5 分钟；发现本身失败时返回错误，而不是猜测版本。
+func (t *DirectTransport) evictionAPIVersion(ctx context.Context) (string, error) {
+	t.evictMu.Lock()
+	defer t.evictMu.Unlock()
+	if t.evictAPIVersion != "" && time.Since(t.evictCheckedAt) < evictionVersionTTL {
+		return t.evictAPIVersion, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	_, err := t.discovery.ServerResourcesForGroupVersion("policy/v1")
+	switch {
+	case err == nil:
+		t.evictAPIVersion = "policy/v1"
+	case apierrors.IsNotFound(err):
+		t.evictAPIVersion = "policy/v1beta1"
+	default:
+		return "", fmt.Errorf("kube: discover eviction api version: %w", err)
+	}
+	t.evictCheckedAt = time.Now()
+	return t.evictAPIVersion, nil
 }
 
 // Watch 监听资源变化。resourceVersion 由客户端携带以支持断线续传。

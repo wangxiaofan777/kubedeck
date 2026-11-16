@@ -38,6 +38,8 @@
 
 - [ ] `helm lint --strict` 通过。
 - [ ] `helm template` 默认值与全可选组件（Ingress/PDB/HPA/NetworkPolicy/ServiceMonitor）均无报错。
+- [ ] `helm template --kube-version 1.18.16` 生成 PDB `policy/v1beta1`、HPA `autoscaling/v2beta2`、Ingress `networking.k8s.io/v1beta1`；`--kube-version 1.37.0` 仍生成现代版本。
+- [ ] `KUBEDECK_TEST_LEGACY_KUBECONFIG=<1.18 kubeconfig> go test ./internal/kube/ -run Legacy` 通过（1.18 未覆盖时记录原因）。
 - [ ] `kubectl apply --dry-run=server` 通过。
 - [ ] 镜像 tag 不可变（digest 或唯一版本），没有使用 `latest`。
 - [ ] 资源 requests/limits、PDB、HPA 与副本数符合容量评估。
@@ -48,7 +50,7 @@
 ## 5. 功能验收
 
 - [ ] 登录 → 当前用户/集群范围 3 秒内返回。
-- [ ] 登记一个 1.34 与一个 1.37 集群，版本读取正确。
+- [ ] 登记一个 1.34、一个 1.37 与一个 1.18（legacy）集群，版本读取正确；1.18 上 CronJob/Ingress 列表可打开，Eviction 走 policy/v1beta1。
 - [ ] 浏览 Pod/Deployment/Service/CRD；部分 discovery 失败时其余资源仍可用。
 - [ ] YAML 非法字段实时提示；Diff → dryRun → 提交成功；并发冲突返回 409。
 - [ ] 伸缩 0→3→0 收敛；重启、回滚、暂停/恢复可用。

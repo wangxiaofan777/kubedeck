@@ -53,7 +53,7 @@ openspec validate add-kubedeck-mvp --strict
 | 前端 | React + TypeScript + Ant Design 5 | React 18 |
 | 数据库 | PostgreSQL（默认）/ MySQL | PG 15+ / MySQL 8.0.20+ |
 | 缓存 | Redis（可选） | 7+ |
-| 测试集群 | k3s | v1.37.2 |
+| 测试集群 | k3s | v1.37.2（支持窗口 1.18–1.37，1.18 为 legacy 兼容档，见 `docs/local-environment.md` §7.4） |
 
 ## 本地测试环境
 

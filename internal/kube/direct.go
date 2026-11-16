@@ -240,6 +240,11 @@ type DirectTransport struct {
 	authz     authzv1.AuthorizationV1Interface
 	rest      rest.Interface
 	logRest   rest.Interface
+
+	// Eviction API 版本按集群实际能力协商，避免每次驱逐都重复发现。
+	evictMu         sync.Mutex
+	evictAPIVersion string
+	evictCheckedAt  time.Time
 }
 
 func newDirectTransport(name, server string, cfg *rest.Config) (*DirectTransport, error) {

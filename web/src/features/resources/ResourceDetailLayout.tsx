@@ -31,7 +31,8 @@ import { ErrorState, PageSkeleton } from '../../components/StateViews'
 import { api, ApiError, type ResourceItem } from '../../lib/api'
 import { formatDateTime } from '../../lib/format'
 import { useCan } from '../auth/useCan'
-import { resolveType, statusOf, type ResourceType } from './resourceTypes'
+import { statusOf, type ResourceType } from './resourceTypes'
+import { useResourceType } from './useResourceType'
 import {
   OWNER_TYPE,
   containersOf,
@@ -62,7 +63,7 @@ export function useResourceDetail(): ResourceDetailContextValue {
 export default function ResourceDetailLayout() {
   const { cluster, typeKey, namespace: nsParam, name } = useParams()
   const namespace = nsParam === '_' ? undefined : nsParam
-  const type = resolveType(typeKey)
+  const type = useResourceType(cluster, typeKey)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { message } = App.useApp()
@@ -74,7 +75,7 @@ export default function ResourceDetailLayout() {
   const [evictError, setEvictError] = useState<ApiError>()
 
   const detailQuery = useQuery({
-    queryKey: ['detail', cluster, type?.key, namespace, name],
+    queryKey: ['detail', cluster, type?.key, type?.gvr.group, type?.gvr.version, namespace, name],
     queryFn: ({ signal }) =>
       api.detail({ cluster: cluster!, gvr: type!.gvr, namespace, name: name!, signal }),
     enabled: !!cluster && !!type && !!name,
@@ -458,8 +459,8 @@ export default function ResourceDetailLayout() {
           type="info"
           showIcon
           style={{ marginBottom: 14 }}
-          message="将创建 policy/v1 Eviction 请求"
-          description="受 PodDisruptionBudget 约束；控制器管理的 Pod 会被自动重建。"
+          message="将创建 Pod Eviction 请求"
+          description="受 PodDisruptionBudget 约束；控制器管理的 Pod 会被自动重建。平台按集群版本自动选择 policy/v1 或 policy/v1beta1。"
         />
         {evictError && (
           <Alert

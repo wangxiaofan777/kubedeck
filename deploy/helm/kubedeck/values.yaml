@@ -48,6 +48,8 @@ service:
 
 ingress:
   enabled: false
+  # Kubernetes 1.18 渲染 networking.k8s.io/v1beta1（serviceName/servicePort），
+  # 1.19+ 渲染 networking.k8s.io/v1；无需手工切换。
   className: ""
   annotations: {}
   hosts:
@@ -83,6 +85,7 @@ readinessProbe:
 
 autoscaling:
   # 多副本需要 Ingress 会话亲和（平台会话保存在进程内存）；否则保持单副本。
+  # 1.18–1.22 自动渲染 autoscaling/v2beta2，1.23+ 使用 autoscaling/v2。
   enabled: false
   minReplicas: 2
   maxReplicas: 10
@@ -90,6 +93,7 @@ autoscaling:
   behavior: {}
 
 pdb:
+  # Kubernetes 1.18–1.20 自动使用 policy/v1beta1，1.21+ 使用 policy/v1。
   enabled: false
   minAvailable: 1
 
@@ -170,4 +174,5 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# 需要 Kubernetes >= 1.19；在 1.18 集群上配置会直接渲染失败，避免生成无效 Pod。
 topologySpreadConstraints: []

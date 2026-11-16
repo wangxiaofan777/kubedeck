@@ -6,6 +6,7 @@ package storetest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -456,6 +457,16 @@ func testSettings(t *testing.T, h Harness) {
 	}
 	if _, err := st.GetSetting(ctx, "no.such.key"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("missing setting error = %v, want ErrNotFound", err)
+	}
+
+	// 平台默认最低版本应随迁移落到 1.18（新库依次应用 init 与 version 迁移）。
+	rawMin, err := st.GetSetting(ctx, domain.SettingMinK8sVersion)
+	if err != nil {
+		t.Fatalf("min k8s version: %v", err)
+	}
+	var minVersion string
+	if err := json.Unmarshal(rawMin, &minVersion); err != nil || minVersion != "1.18" {
+		t.Fatalf("default min k8s version = %q, %v; want \"1.18\"", rawMin, err)
 	}
 }
 

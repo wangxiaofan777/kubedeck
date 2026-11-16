@@ -22,10 +22,16 @@ type fakeStore struct {
 	nextID   int64
 	clusters map[string]domain.Cluster
 	creds    map[int64]domain.Credential
+	setting  json.RawMessage
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{nextID: 1, clusters: map[string]domain.Cluster{}, creds: map[int64]domain.Credential{}}
+	return &fakeStore{
+		nextID:   1,
+		clusters: map[string]domain.Cluster{},
+		creds:    map[int64]domain.Credential{},
+		setting:  json.RawMessage(`"1.34"`),
+	}
 }
 
 func (f *fakeStore) Clusters(context.Context) ([]domain.Cluster, error) {
@@ -126,7 +132,10 @@ func (f *fakeStore) DeleteCluster(_ context.Context, id int64) error {
 	return domain.ErrNotFound
 }
 func (f *fakeStore) GetSetting(context.Context, string) (json.RawMessage, error) {
-	return json.RawMessage(`"1.34"`), nil
+	if f.setting == nil {
+		return nil, domain.ErrNotFound
+	}
+	return f.setting, nil
 }
 
 func fakeAPIServer(t *testing.T, version string) *httptest.Server {
@@ -219,6 +228,35 @@ func TestManagerRejectsLowVersion(t *testing.T) {
 	mgr := NewManager(kube.NewRegistry(), newFakeStore(), testRing(t), nil)
 	_, err := mgr.Create(context.Background(), CreateRequest{
 		Name: "old", Credential: kube.IngestInput{Kubeconfig: kubeconfigFor(srv.URL)},
+	})
+	if !errors.Is(err, ErrNotSupported) {
+		t.Fatalf("err = %v, want ErrNotSupported", err)
+	}
+}
+
+func TestManagerAcceptsLegacy118ByDefault(t *testing.T) {
+	srv := fakeAPIServer(t, "v1.18.16+k3s1")
+	store := newFakeStore()
+	store.setting = nil // 未设置 platform.min_k8s_version，走平台默认 1.18
+	mgr := NewManager(kube.NewRegistry(), store, testRing(t), nil)
+	c, err := mgr.Create(context.Background(), CreateRequest{
+		Name: "legacy", Credential: kube.IngestInput{Kubeconfig: kubeconfigFor(srv.URL)},
+	})
+	if err != nil {
+		t.Fatalf("1.18 cluster rejected by default gate: %v", err)
+	}
+	if c.ServerVersion != "v1.18.16+k3s1" {
+		t.Fatalf("server version = %q", c.ServerVersion)
+	}
+}
+
+func TestManagerRejectsBelowDefault118(t *testing.T) {
+	srv := fakeAPIServer(t, "v1.17.9")
+	store := newFakeStore()
+	store.setting = nil
+	mgr := NewManager(kube.NewRegistry(), store, testRing(t), nil)
+	_, err := mgr.Create(context.Background(), CreateRequest{
+		Name: "too-old", Credential: kube.IngestInput{Kubeconfig: kubeconfigFor(srv.URL)},
 	})
 	if !errors.Is(err, ErrNotSupported) {
 		t.Fatalf("err = %v, want ErrNotSupported", err)

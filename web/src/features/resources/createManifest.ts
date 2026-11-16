@@ -1,4 +1,5 @@
 import type { ResourceItem } from '../../lib/api'
+import { apiVersionOf, type ResourceType } from './resourceTypes'
 
 export interface KeyValue {
   key: string
@@ -153,8 +154,13 @@ function container(v: FormValues) {
   }
 }
 
-/** buildManifest 由表单值生成对象；纯函数，便于单测与 YAML 预览。 */
-export function buildManifest(kind: FormKind, v: FormValues): Record<string, unknown> | undefined {
+/** buildManifest 由表单值生成对象；纯函数，便于单测与 YAML 预览。
+ * apiVersion 由集群实际提供的 GVR 决定（见 buildManifestFor），缺省使用新版 API。 */
+export function buildManifest(
+  kind: FormKind,
+  v: FormValues,
+  apiVersion?: string,
+): Record<string, unknown> | undefined {
   const labels = labelsObject(v.labels)
   const base = {
     metadata: {
@@ -234,7 +240,7 @@ export function buildManifest(kind: FormKind, v: FormValues): Record<string, unk
       }
     case 'cronjobs':
       return {
-        apiVersion: 'batch/v1',
+        apiVersion: apiVersion ?? 'batch/v1',
         kind: 'CronJob',
         ...base,
         spec: {
@@ -251,9 +257,13 @@ export function buildManifest(kind: FormKind, v: FormValues): Record<string, unk
           },
         },
       }
-    case 'ingresses':
+    case 'ingresses': {
+      const ingressVersion = apiVersion ?? 'networking.k8s.io/v1'
+      const legacy = ingressVersion === 'networking.k8s.io/v1beta1'
+      const serviceName = v.serviceName || v.name
+      const servicePort = v.servicePort ?? 80
       return {
-        apiVersion: 'networking.k8s.io/v1',
+        apiVersion: ingressVersion,
         kind: 'Ingress',
         ...base,
         spec: {
@@ -266,12 +276,15 @@ export function buildManifest(kind: FormKind, v: FormValues): Record<string, unk
                   {
                     path: v.path || '/',
                     pathType: v.pathType,
-                    backend: {
-                      service: {
-                        name: v.serviceName || v.name,
-                        port: { number: v.servicePort ?? 80 },
-                      },
-                    },
+                    // networking.k8s.io/v1 用 backend.service，v1beta1 用扁平的 serviceName/servicePort。
+                    backend: legacy
+                      ? { serviceName, servicePort }
+                      : {
+                          service: {
+                            name: serviceName,
+                            port: { number: servicePort },
+                          },
+                        },
                   },
                 ],
               },
@@ -279,11 +292,21 @@ export function buildManifest(kind: FormKind, v: FormValues): Record<string, unk
           ],
         },
       }
+    }
     case 'namespaces':
       return { apiVersion: 'v1', kind: 'Namespace', ...base }
     default:
       return undefined
   }
+}
+
+/** buildManifestFor 按有效资源类型生成清单，apiVersion 跟随集群实际提供的版本。 */
+export function buildManifestFor(
+  type: Pick<ResourceType, 'key' | 'gvr'> | undefined,
+  values: FormValues,
+): Record<string, unknown> | undefined {
+  if (!type) return undefined
+  return buildManifest(type.key as FormKind, values, apiVersionOf(type.gvr))
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -323,8 +346,14 @@ export function valuesFromResource(
   const rules = Array.isArray(spec.rules) ? asRecord(spec.rules[0]) : {}
   const http = asRecord(rules.http)
   const paths = Array.isArray(http.paths) ? asRecord(http.paths[0]) : {}
-  const backend = asRecord(asRecord(paths.backend).service)
+  const rawBackend = asRecord(paths.backend)
+  const backend = asRecord(rawBackend.service)
   const backendPort = asRecord(backend.port)
+  // networking.k8s.io/v1beta1 的后端是扁平的 serviceName/servicePort。
+  const legacyServiceName =
+    typeof rawBackend.serviceName === 'string' ? rawBackend.serviceName : ''
+  const legacyServicePort =
+    typeof rawBackend.servicePort === 'number' ? rawBackend.servicePort : undefined
 
   return {
     name: item.metadata.name,
@@ -336,7 +365,7 @@ export function valuesFromResource(
         ? port.containerPort
         : typeof backendPort.number === 'number'
           ? backendPort.number
-          : undefined,
+          : legacyServicePort,
     servicePort: typeof servicePorts.port === 'number' ? servicePorts.port : undefined,
     serviceType: (spec.type as FormValues['serviceType']) ?? 'ClusterIP',
     command: Array.isArray(first.command) ? (first.command as string[]).join(' ') : '',
@@ -351,6 +380,6 @@ export function valuesFromResource(
     path: (paths.path as string) ?? '/',
     pathType: (paths.pathType as FormValues['pathType']) ?? 'Prefix',
     tls: Array.isArray(spec.tls) && spec.tls.length > 0,
-    serviceName: (spec.serviceName as string) ?? (backend.name as string) ?? '',
+    serviceName: (spec.serviceName as string) ?? (backend.name as string) ?? legacyServiceName ?? '',
   }
 }

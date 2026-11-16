@@ -3,6 +3,7 @@ import type { ResourceItem } from '../../lib/api'
 import {
   FORM_KINDS,
   buildManifest,
+  buildManifestFor,
   emptyValues,
   templatesFor,
   valuesFromResource,
@@ -88,6 +89,54 @@ describe('templatesFor', () => {
   })
 })
 
+describe('buildManifestFor', () => {
+  interface IngressBackend {
+    serviceName?: string
+    servicePort?: number
+    service?: { name?: string; port?: { number?: number } }
+  }
+
+  it('keeps modern API versions when the cluster serves them', () => {
+    const manifest = buildManifestFor(
+      { key: 'cronjobs', gvr: { group: 'batch', version: 'v1', resource: 'cronjobs' } },
+      valuesFor('cronjobs'),
+    )
+    expect(manifest?.apiVersion).toBe('batch/v1')
+  })
+
+  it('builds a batch/v1beta1 CronJob for legacy clusters', () => {
+    const manifest = buildManifestFor(
+      { key: 'cronjobs', gvr: { group: 'batch', version: 'v1beta1', resource: 'cronjobs' } },
+      valuesFor('cronjobs'),
+    )
+    expect(manifest?.apiVersion).toBe('batch/v1beta1')
+  })
+
+  it('builds a v1beta1 Ingress backend with serviceName/servicePort', () => {
+    const manifest = buildManifestFor(
+      {
+        key: 'ingresses',
+        gvr: { group: 'networking.k8s.io', version: 'v1beta1', resource: 'ingresses' },
+      },
+      valuesFor('ingresses'),
+    ) as unknown as { apiVersion: string; spec: { rules: { http: { paths: { backend: IngressBackend }[] } }[] } }
+    expect(manifest.apiVersion).toBe('networking.k8s.io/v1beta1')
+    expect(manifest.spec.rules[0].http.paths[0].backend).toEqual({
+      serviceName: 'sample-app',
+      servicePort: 80,
+    })
+  })
+
+  it('keeps the v1 Ingress backend shape', () => {
+    const manifest = manifestOf('ingresses') as unknown as {
+      spec: { rules: { http: { paths: { backend: IngressBackend }[] } }[] }
+    }
+    expect(manifest.spec.rules[0].http.paths[0].backend).toEqual({
+      service: { name: 'sample-app', port: { number: 80 } },
+    })
+  })
+})
+
 describe('valuesFromResource', () => {
   it('maps an existing Deployment back into form values', () => {
     const manifest = manifestOf('deployments')
@@ -99,5 +148,23 @@ describe('valuesFromResource', () => {
     expect(values.name).toBe('sample-app')
     expect(values.image).toBe('nginx:1.27')
     expect(values.replicas).toBe(2)
+  })
+
+  it('reads the legacy v1beta1 Ingress backend shape', () => {
+    const item = {
+      metadata: { name: 'legacy-ingress', namespace: 'default' },
+      spec: {
+        rules: [
+          {
+            host: 'legacy.example.com',
+            http: { paths: [{ path: '/', pathType: 'Prefix', backend: { serviceName: 'web', servicePort: 8080 } }] },
+          },
+        ],
+      },
+    } as unknown as ResourceItem
+    const values = valuesFromResource('ingresses', item, 'default')
+    expect(values.serviceName).toBe('web')
+    expect(values.containerPort).toBe(8080)
+    expect(values.host).toBe('legacy.example.com')
   })
 })

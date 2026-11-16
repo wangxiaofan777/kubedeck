@@ -1,6 +1,9 @@
 {{- if gt (int .Values.replicaCount) 1 }}
 {{- fail "KubeDeck stores sessions and OIDC access tokens in process memory; replicaCount must be 1 until a shared session store is implemented" }}
 {{- end }}
+{{- if and .Values.topologySpreadConstraints (not (semverCompare ">=1.19-0" .Capabilities.KubeVersion.Version)) }}
+{{- fail "topologySpreadConstraints requires Kubernetes >= 1.19; remove the value or upgrade the cluster" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

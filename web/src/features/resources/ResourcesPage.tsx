@@ -28,7 +28,8 @@ import { EmptyState, ErrorState, PageSkeleton } from '../../components/StateView
 import ResourceTable, { itemKey } from '../../components/ResourceTable'
 import { useCan } from '../auth/useCan'
 import { useResourceList } from './useResourceList'
-import { isCreatable, isCrashLoop, resolveType } from './resourceTypes'
+import { useResourceType } from './useResourceType'
+import { isCreatable, isCrashLoop } from './resourceTypes'
 
 const PAGE_LIMIT = 500
 
@@ -39,7 +40,7 @@ export default function ResourcesPage() {
   const queryClient = useQueryClient()
   const { message } = App.useApp()
 
-  const type = resolveType(typeKey)
+  const type = useResourceType(cluster, typeKey)
   const namespace = searchParams.get('namespace') ?? ''
   const continueToken = searchParams.get('continue') ?? ''
   const urlSearch = searchParams.get('search') ?? ''
@@ -72,6 +73,8 @@ export default function ResourcesPage() {
       'resources',
       cluster,
       type?.key,
+      type?.gvr.group,
+      type?.gvr.version,
       namespace,
       labelSelector,
       '',
@@ -80,7 +83,7 @@ export default function ResourcesPage() {
       '',
       '',
     ],
-    [cluster, type?.key, namespace, labelSelector, continueToken],
+    [cluster, type?.key, type?.gvr.group, type?.gvr.version, namespace, labelSelector, continueToken],
   )
 
   useResourceRealtime({

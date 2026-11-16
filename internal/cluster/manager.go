@@ -24,7 +24,7 @@ var (
 )
 
 const (
-	defaultMinVersion = "1.34"
+	defaultMinVersion = "1.18"
 	probeTimeout      = 6 * time.Second
 )
 

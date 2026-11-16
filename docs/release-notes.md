@@ -1,5 +1,24 @@
 # 发布说明
 
+## 未发布
+
+### Kubernetes 1.18 legacy 兼容
+
+- 支持窗口扩展为 **1.18–1.37**；1.18–1.20 标记为 legacy（EOL，只做兼容不做安全背书，建议尽快升级）。
+- 集群登记默认最低版本改为 1.18；PG/MySQL 迁移仅在旧值仍为 `"1.34"` 时更新，不覆盖管理员自定义值。
+- Pod 驱逐按集群实际能力在 `policy/v1` 与 `policy/v1beta1` 之间自动协商（结果缓存 5 分钟）。
+- 前端按 discovery 结果解析资源版本：1.18 上 CronJob 自动使用 `batch/v1beta1`，Ingress 使用 `networking.k8s.io/v1beta1` 并生成对应的 `serviceName/servicePort` 清单。
+- Helm Chart `kubeVersion` 下调为 `>=1.18.0-0`，并按 `--kube-version` 条件渲染 PDB（v1beta1）、HPA（v2beta2）、Ingress（v1beta1）；1.18 上配置 `topologySpreadConstraints` 会明确失败。
+- 新增可选 legacy 集成测试（`KUBEDECK_TEST_LEGACY_KUBECONFIG`），覆盖 discovery、ConfigMap CRUD/watch、Deployment scale 与 Eviction 降级。
+
+### 1.18 实测
+
+| K8S | k3s | discovery | 动态 CRUD/watch | scale | eviction |
+|---|---|---|---|---|---|
+| 1.18 | v1.18.16+k3s1 | ✅ 51 个资源，metrics 失败组按预期容忍 | ✅ ConfigMap 创建/更新/watch | ✅ Deployment | ✅ 自动降级 policy/v1beta1 |
+
+impersonate/SSAR 与 exec 未在 1.18 上单独实测；主路径已由 `internal/kube/legacy_test.go` 覆盖。
+
 ## 0.1.0 (2026-11-12)
 
 KubeDeck MVP：多集群 Kubernetes 只读/受控写操作控制台。

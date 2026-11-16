@@ -79,7 +79,8 @@ type Transport interface {
 	Delete(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, opts DeleteOptions) error
 	// Scale 通过 scale 子资源调整副本数，避免与主体更新冲突。
 	Scale(ctx context.Context, gvr schema.GroupVersionResource, namespace, name string, replicas int32) (*unstructured.Unstructured, error)
-	// Evict 通过 policy/v1 Eviction 驱逐 Pod，受 PDB 约束。
+	// Evict 通过 pods/eviction 子资源驱逐 Pod，受 PDB 约束。
+	// 按集群实际能力选择 policy/v1 或 policy/v1beta1。
 	Evict(ctx context.Context, namespace, name string, gracePeriodSeconds *int64) error
 	// Logs 读取或跟随 Pod 容器日志。调用方负责关闭返回的 reader。
 	Logs(ctx context.Context, namespace, name string, opts LogOptions) (io.ReadCloser, error)

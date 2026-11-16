@@ -61,7 +61,7 @@ export default function ResourceDiffPage() {
       await api.updateYAML({ cluster, gvr: type.gvr, namespace, name, yaml: draft.code })
       clearYamlDraft(draftKey)
       await queryClient.invalidateQueries({ queryKey: ['yaml', cluster, type.gvr.group, type.gvr.version, type.gvr.resource, namespace, name] })
-      await queryClient.invalidateQueries({ queryKey: ['detail', cluster, type.key, namespace, name] })
+      await queryClient.invalidateQueries({ queryKey: ['detail', cluster, type.key, type.gvr.group, type.gvr.version, namespace, name] })
       await queryClient.invalidateQueries({ queryKey: ['resources'] })
       message.success('提交成功')
       navigate('..')

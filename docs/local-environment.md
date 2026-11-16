@@ -32,7 +32,7 @@ systemd=true
 | kubectl | v1.36.1（或 k3s 自带） | Windows / WSL |
 | client-go | v0.37.2 | 由 `verify/go.mod` 锁定 |
 
-> **版本原则**：平台支持窗口为 K8S 1.34–1.37（client-go v0.37.2 对应上游 n-3 偏移），硬地板 1.24。接入时读取 `/version`，低于 1.34 拒绝接入（返回 400）。依据见 [design.md D12](../openspec/changes/archive/2026-11-13-add-kubedeck-mvp/design.md)。版本比较使用 `/version` 返回的 `major`/`minor` 字段，不要解析 `gitVersion`（k3s 的形如 `v1.37.2+k3s1`，带构建后缀）。
+> **版本原则**：平台支持窗口为 K8S 1.18–1.37，其中 1.18–1.20 为 legacy 档（已 EOL，只做兼容不做安全背书）。接入时读取 `/version`，低于 1.18 拒绝接入（返回 400）。client-go 仍为 v0.37.2，1.18 超出上游 ±1 skew，已覆盖动态 CRUD/watch/log/scale/evict 主路径；1.18 实测与限制见 §7.4。版本比较使用 `/version` 返回的 `gitVersion`（如 `v1.18.16+k3s1`），`major`/`minor` 字段仅用于展示。
 
 ## 3. 安装 k3s（WSL 内）
 
@@ -303,6 +303,29 @@ make test-db-mysql
 两种引擎同时验证：`make test-db-all`（需要 `.testenv/db.env` 与 `.testenv/mysql.env` 都已就绪）。
 
 主密钥用于集群凭据加密（design D7），通过 `KUBEDECK_MASTER_KEY`（base64 编码的 32 字节）与 `KUBEDECK_MASTER_KEY_VERSION` 注入；轮换期间用 `KUBEDECK_PREVIOUS_MASTER_KEY` / `KUBEDECK_PREVIOUS_MASTER_KEY_VERSION` 保留旧密钥解密存量密文。生成示例：`openssl rand -base64 32`。主密钥只经环境变量或密钥管理系统注入，不写进仓库，也不入库。
+
+### 7.4 Kubernetes 1.18 legacy 兼容测试
+
+1.18 是 legacy 档（已 EOL，只做兼容不做安全背书）。本地用 Docker 跑一个仅 API server 的 k3s 1.18，不需要节点与网络插件：
+
+```bash
+# 1) 启动 1.18 API server（仅绑定本机 6445；--disable-agent 适配受限的 cgroup 环境）
+docker run -d --name k3s-118 -p 127.0.0.1:6445:6443 \
+  rancher/k3s:v1.18.16-k3s1 \
+  server --tls-san 127.0.0.1 --disable-agent --disable traefik
+
+# 2) 等 API 就绪后导出 kubeconfig（写入 .testenv/，已被 gitignore）
+MSYS_NO_PATHCONV=1 docker exec k3s-118 cat /etc/rancher/k3s/k3s.yaml \
+  | sed 's/127.0.0.1:6443/127.0.0.1:6445/' > .testenv/k3s-118.yaml
+
+# 3) 跑兼容测试：discovery、ConfigMap CRUD/watch、Deployment scale、Eviction 降级
+KUBEDECK_TEST_LEGACY_KUBECONFIG='D:/AI_Coding/kubedeck/.testenv/k3s-118.yaml' \
+  go test ./internal/kube/ -run Legacy -v
+```
+
+未设置 `KUBEDECK_TEST_LEGACY_KUBECONFIG` 时该用例自动跳过，常规 CI 不受影响；发布前需在本地或验收环境至少跑一次（见 [release-checklist.md](./release-checklist.md)）。
+
+1.18 上没有 metrics-server，资源发现会出现 `metrics.k8s.io/v1beta1` 失败组，这属于预期的部分失败容忍；CronJob/Ingress 为 beta API，前端会自动回退，Eviction 自动使用 `policy/v1beta1`。
 
 ## 8. 常见问题
 

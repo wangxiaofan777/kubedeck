@@ -11,7 +11,7 @@ MVP 功能已完成并通过本地 k3s 端到端验收（2026-11-12）：
 | 能力 | 状态 |
 |---|---|
 | 身份与授权 | OIDC + PKCE、服务端会话、Impersonation、SSAR 预检、首管理员引导 |
-| 多集群接入 | 登记/轮换/删除、凭据 AES-256-GCM、健康探测、1.34–1.37 版本校验 |
+| 多集群接入 | 登记/轮换/删除、凭据 AES-256-GCM、健康探测、1.18–1.37 版本校验（1.18 为 legacy 兼容档） |
 | 资源浏览 | discovery（容忍部分失败）、分页/过滤/排序、详情/事件、YAML 编辑与 Diff |
 | 工作负载 | 伸缩、重启、历史/回滚、暂停/恢复、Pod 驱逐、操作进度 |
 | 日志与实时 | 多容器日志、跟随/暂停/过滤；WebSocket 多路复用、续传/resync |
@@ -25,7 +25,7 @@ MVP 功能已完成并通过本地 k3s 端到端验收（2026-11-12）：
 
 ## 快速开始
 
-前置依赖：Go 1.27、Node.js 24、PostgreSQL 15+ 或 MySQL 8.0.20+（默认 PostgreSQL）、k3s 1.34–1.37（可选，但看资源列表需要）。
+前置依赖：Go 1.27、Node.js 24、PostgreSQL 15+ 或 MySQL 8.0.20+（默认 PostgreSQL）、k3s 1.18–1.37（可选，但看资源列表需要；1.18 为 legacy 兼容档）。
 
 ```bash
 # 1) 初始化本地数据库（幂等；连接串写入 .testenv/db.env）
@@ -130,7 +130,7 @@ MySQL 部署需要开启 `log_bin_trust_function_creators=1`（审计只追加�
 - 后端：`make test`；数据层集成测试需 PostgreSQL 或 MySQL 8（`make test-db` / `make test-db-mysql`）；列表压测见 `internal/api/load_test.go`。
 - 前端：ESLint + Prettier + `tsc --noEmit` + Vite build。
 - CI：后端 lint/vet/staticcheck/`go test -race` + 真实 PostgreSQL 与 MySQL；前端 lint/typecheck/build；镜像构建。
-- 版本矩阵：k3s 1.34 与 1.37 实测见 [docs/local-environment.md §7.1](docs/local-environment.md)。
+- 版本矩阵：k3s 1.34 与 1.37 实测见 [docs/local-environment.md §7.1](docs/local-environment.md)；1.18.16 legacy 兼容测试见 §7.4。
 
 ## OpenSpec
 

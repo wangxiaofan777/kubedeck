@@ -10,7 +10,7 @@ KubeDeck 运行时**不访问公网**：前端、Monaco 编辑器、数据库迁
 
 | 依赖 | 是否在离线包 | 说明 |
 |---|---|---|
-| Kubernetes 1.34+（Helm 方式）或 Docker 24+ / Compose v2.24+（Compose 方式） | 否 | 目标环境自行准备 |
+| Kubernetes 1.18+（Helm 方式；1.18–1.20 为 legacy）或 Docker 24+ / Compose v2.24+（Compose 方式） | 否 | 目标环境自行准备 |
 | PostgreSQL 15+ 或 MySQL 8.0.20+ | Compose 包内含 PostgreSQL；MySQL 需加 `--with-mysql`；Helm 方式需外部实例 | 应用启动时自动迁移 |
 | OIDC IdP（Keycloak/Dex 等） | 否 | **硬依赖**，启动时 discovery 失败会直接退出 |
 | 内网 TLS 证书或内部 CA | 部分 | Compose 默认使用 Caddy 内部 CA；Helm 由 Ingress 终止 TLS |
@@ -273,7 +273,7 @@ docker compose -f docker-compose.yml -f docker-compose.offline.yml \
 
 ## 6. Helm 离线部署
 
-前置条件：Kubernetes 1.34–1.37、Helm 3.16+、外部 PostgreSQL 15+ 或 MySQL 8.0.20+、已安装的 Ingress Controller、可用的 OIDC IdP。Helm 与 kubectl 二进制需要提前拷入目标机；Chart 没有外部依赖，`helm install` 不会联网。
+前置条件：Kubernetes 1.18–1.37（1.18–1.20 为 legacy 档）、Helm 3.16+、外部 PostgreSQL 15+ 或 MySQL 8.0.20+、已安装的 Ingress Controller、可用的 OIDC IdP。Helm 与 kubectl 二进制需要提前拷入目标机；Chart 没有外部依赖，`helm install` 不会联网。
 
 ### 6.1 导入镜像
 
@@ -484,7 +484,7 @@ helm upgrade kubedeck ./kubedeck -n kubedeck-system -f values-prod.yaml \
 | 浏览器提示证书不受信任 | Compose 使用内部 CA，需导入 `kubedeck-root.crt`；或换成企业证书 |
 | OIDC discovery 失败 | IdP 地址从容器/Pod 不可达，或 issuer 与 discovery 返回不一致 |
 | 登录后立即掉线 | 通过 HTTP 访问但 `cookieInsecure=false`；必须走 HTTPS |
-| `helm` 报 Kubernetes 版本不满足 | Chart 要求 1.34+；升级集群或使用 Compose 方式 |
+| `helm` 报 Kubernetes 版本不满足 | Chart 要求 1.18+；升级集群或使用 Compose 方式 |
 | `docker load` 报磁盘不足 | 完整包解压需要约 590 MB（含 PostgreSQL 镜像），预留 2 GB 更稳妥；带 `--with-mysql` 时再增加 MySQL 镜像体积 |
 | `replicaCount must be 1` | 会话在进程内存，离线也不能扩副本 |
 

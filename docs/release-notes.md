@@ -45,6 +45,7 @@ KubeDeck MVP：多集群 Kubernetes 只读/受控写操作控制台。
 
 - `make check`：后端 lint/vet/staticcheck/单测 + 前端 lint/typecheck
 - `make test-db`：真实 PostgreSQL 集成测试
+- `make test-db-mysql`：真实 MySQL 8 集成测试
 - `helm lint --strict`、`helm template`（默认与全可选组件）
 - k3s 端到端：登录/接入/浏览/伸缩/日志/审计
 - 最小权限：平台 SA 仅 impersonate；只读用户写请求 403

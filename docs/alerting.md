@@ -50,7 +50,7 @@ make test-rules
 在测试环境可临时降低阈值或使用以下方式制造信号：
 
 - 集群不可达：登记一个指向不可路由地址的集群，等待健康探测。
-- 审计积压：暂停 PostgreSQL 或限制其连接，观察 queue depth 与 degraded。
+- 审计积压：暂停平台元数据库（PostgreSQL/MySQL）或限制其连接，观察 queue depth 与 degraded。
 - 5xx：请求不存在的后端或注入故障。
 - WS 重同步：重启 apiserver/watch 连接，使客户端收到 resync。
 

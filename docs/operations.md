@@ -11,7 +11,7 @@ curl -fsS https://kubedeck.example.com/healthz
 curl -fsS https://kubedeck.example.com/readyz
 ```
 
-`/healthz` 只表示进程存活；`/readyz` 会检查 PostgreSQL，失败返回 503。`/metrics` 用于 Prometheus 抓取。
+`/healthz` 只表示进程存活；`/readyz` 会检查平台元数据库（PostgreSQL/MySQL），失败返回 503。`/metrics` 用于 Prometheus 抓取。
 
 日志：
 
@@ -25,7 +25,7 @@ kubectl -n kubedeck-system logs deploy/kubedeck --tail=200 | grep requestId
 ## 2. 升级
 
 1. 阅读 release notes 与数据库迁移说明。
-2. 备份 PostgreSQL（见 [backup-restore.md](./backup-restore.md)）。
+2. 备份平台元数据库（PostgreSQL 或 MySQL，见 [backup-restore.md](./backup-restore.md)）。
 3. `helm upgrade kubedeck deploy/helm/kubedeck -n kubedeck-system -f values-prod.yaml --wait --timeout 5m`
 4. 检查 `kubectl rollout status`、`/readyz`、集群列表与一次只读浏览。
 5. 观察 5xx、列表 P95、WS 重同步与审计队列 10 分钟。
@@ -58,7 +58,7 @@ kubectl -n kubedeck-system logs deploy/kubedeck --previous --tail=200
 
 ### 4.2 `/readyz` 503
 
-数据库不可达。检查 Secret、网络策略、PostgreSQL 连接数。读路径在数据库故障时仍可用，但登录、角色绑定与审计写入会受影响；写操作应返回 503，不要绕过。
+数据库不可达。检查 Secret、网络策略、数据库连接数与引擎配置（`KUBEDECK_DB_DRIVER` 与连接串是否一致）。读路径在数据库故障时仍可用，但登录、角色绑定与审计写入会受影响；写操作应返回 503，不要绕过。
 
 ### 4.3 登录 401/重定向循环
 

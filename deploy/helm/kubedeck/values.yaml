@@ -121,6 +121,11 @@ serviceMonitor:
   relabelings: []
   metricRelabelings: []
 
+# 平台元数据存储引擎：postgres（默认）或 mysql。
+# 连接串仍由 secrets.databaseUrl / existingSecret 的 KUBEDECK_DATABASE_URL 提供。
+database:
+  driver: postgres
+
 # 非敏感配置（对应 KUBEDECK_* 环境变量）。
 config:
   logLevel: info
@@ -155,6 +160,11 @@ dev:
   mountPath: /etc/kubedeck/kubeconfig
 
 extraEnv: []
+
+# 额外卷与挂载。离线环境常用于挂载内网 CA，配合 SSL_CERT_FILE 让
+# OIDC IdP / PostgreSQL 的私有证书被信任。
+extraVolumes: []
+extraVolumeMounts: []
 
 nodeSelector: {}
 tolerations: []

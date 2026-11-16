@@ -1,0 +1,114 @@
+package postgres
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/kubedeck/kubedeck/internal/domain"
+	"github.com/kubedeck/kubedeck/internal/store"
+)
+
+const auditColumns = `id, occurred_at, request_id, actor_id, actor_subject, actor_email,
+	cluster_id, cluster_name, verb, api_group, resource, namespace, name,
+	result, result_code, latency_ms, COALESCE(host(client_ip), ''), user_agent,
+	body_hash, detail, prev_hash, hash`
+
+// auditWhere 构造过滤条件并返回参数占位符。
+func auditWhere(f store.AuditFilter) (string, []any) {
+	var (
+		where []string
+		args  []any
+	)
+	add := func(cond string, v any) {
+		args = append(args, v)
+		where = append(where, fmt.Sprintf(cond, len(args)))
+	}
+	if f.From != nil {
+		add("occurred_at >= $%d", f.From.UTC())
+	}
+	if f.To != nil {
+		add("occurred_at < $%d", f.To.UTC())
+	}
+	if f.ActorSubject != "" {
+		add("actor_subject = $%d", f.ActorSubject)
+	}
+	if f.ClusterName != "" {
+		add("cluster_name = $%d", f.ClusterName)
+	}
+	if f.Resource != "" {
+		add("resource = $%d", f.Resource)
+	}
+	if f.Result != "" {
+		add("result = $%d", f.Result)
+	}
+	if len(where) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(where, " AND "), args
+}
+
+// CountAudit 返回满足条件的记录数。
+func (s *Store) CountAudit(ctx context.Context, f store.AuditFilter) (int, error) {
+	clause, args := auditWhere(f)
+	var n int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM audit_logs`+clause, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: count audit logs: %w", err)
+	}
+	return n, nil
+}
+
+// QueryAudit 按时间倒序查询审计记录。
+// 交互分页与导出共用该入口：上限 5000，交互列表由 handler 限制为 500。
+func (s *Store) QueryAudit(ctx context.Context, f store.AuditFilter) ([]domain.AuditEntry, error) {
+	clause, args := auditWhere(f)
+	limit, offset := store.AuditPageArgs(f.Limit, f.Offset)
+	args = append(args, limit, offset)
+
+	sql := fmt.Sprintf(`SELECT %s FROM audit_logs%s ORDER BY occurred_at DESC, id DESC LIMIT $%d OFFSET $%d`,
+		auditColumns, clause, len(args)-1, len(args))
+
+	rows, err := s.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: query audit logs: %w", err)
+	}
+	defer rows.Close()
+
+	entries := make([]domain.AuditEntry, 0, limit)
+	for rows.Next() {
+		e, err := scanAuditEntry(rows)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, mapError(rows.Err())
+}
+
+// scanAuditEntry 扫描审计记录。
+func scanAuditEntry(row pgx.Row) (domain.AuditEntry, error) {
+	var (
+		e      domain.AuditEntry
+		detail []byte
+	)
+	err := row.Scan(&e.ID, &e.OccurredAt, &e.RequestID, &e.ActorID, &e.ActorSubject, &e.ActorEmail,
+		&e.ClusterID, &e.ClusterName, &e.Verb, &e.APIGroup, &e.Resource, &e.Namespace, &e.ObjectName,
+		&e.Result, &e.ResultCode, &e.LatencyMS, &e.ClientIP, &e.UserAgent,
+		&e.BodyHash, &detail, &e.PrevHash, &e.Hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.AuditEntry{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.AuditEntry{}, fmt.Errorf("store: scan audit log: %w", err)
+	}
+	if len(detail) > 0 {
+		if err := json.Unmarshal(detail, &e.Detail); err != nil {
+			return domain.AuditEntry{}, fmt.Errorf("store: decode audit detail: %w", err)
+		}
+	}
+	return e, nil
+}

@@ -11,7 +11,7 @@ KubeDeck（集群驾驶舱）是一个多集群 Kubernetes Web 管理控制台�
 1. `README.md` — 项目定位、目录、技术栈
 2. `openspec/changes/archive/2026-11-13-add-kubedeck-mvp/proposal.md` — 为什么做、做什么、不做什么
 3. `openspec/changes/archive/2026-11-13-add-kubedeck-mvp/design.md` — 技术决策、API 契约、数据映射、关键时序、性能预算
-4. `openspec/specs/` — 8 个能力的验收标准（已归档到主规格）
+4. `openspec/specs/` — 11 个能力的验收标准（已归档到主规格）
 5. `k8s-console-design.md` — 产品级设计总纲（含 API 清单、错误码、WS 协议、容量估算等附录；以 spec 为验收依据）
 6. `docs/local-environment.md` — 动手前先看环境手册
 7. `docs/deployment.md` — 生产部署、OIDC、最小权限与主密钥轮换
@@ -39,7 +39,7 @@ openspec validate add-kubedeck-mvp --strict
 ## 不可违背的架构约束
 
 1. **授权只走 Impersonation**：平台 ServiceAccount 仅授予 `users`/`groups`/`serviceaccounts` 的 `impersonate` 动词，**禁止**授予 `cluster-admin`；权限判定由 apiserver 完成，平台不维护第二套权限表。
-2. **集群资源状态不入库**：PostgreSQL 只存平台元数据与审计；列表读 informer 缓存，详情按需 GET。
+2. **集群资源状态不入库**：关系数据库（PostgreSQL/MySQL）只存平台元数据与审计；列表读 informer 缓存，详情按需 GET。
 3. **资源发现必须容忍部分失败**：`ServerPreferredResources()` 出错时用 `discovery.IsGroupDiscoveryFailedError` 判断并继续，不能让一个聚合 API 拖垮整个资源目录。
 4. **写操作必须审计**：审计异步写入、只追加、带哈希链；请求体只存摘要哈希。
 5. **前端隐藏不等于授权**：所有写请求在服务端重新校验。
@@ -51,7 +51,7 @@ openspec validate add-kubedeck-mvp --strict
 |---|---|---|
 | 后端 | Go + client-go | Go 1.27 / client-go v0.37.2 |
 | 前端 | React + TypeScript + Ant Design 5 | React 18 |
-| 数据库 | PostgreSQL | 15+ |
+| 数据库 | PostgreSQL（默认）/ MySQL | PG 15+ / MySQL 8.0.20+ |
 | 缓存 | Redis（可选） | 7+ |
 | 测试集群 | k3s | v1.37.2 |
 
@@ -78,6 +78,9 @@ make test
 # 数据层集成测试（连接 .testenv/db.env 中的 PostgreSQL，见 docs/local-environment.md §7.3）
 make test-db
 
+# MySQL 数据层集成测试（连接 .testenv/mysql.env；先执行 make db-mysql）
+make test-db-mysql
+
 # 提交前统一检查：后端 lint/测试 + 前端 lint/typecheck
 make check
 
@@ -89,6 +92,6 @@ wsl.exe -d Ubuntu -u root -- bash -lc "cd /root/kubedeck-verify && ./verify -mod
 
 - 不要把 kubeconfig、token、证书私钥写进文档、日志或提交记录
 - 不要绕过 OpenSpec 直接改行为；不要为了让校验通过而编造需求
-- 不要把集群资源状态同步进 PostgreSQL
+- 不要把集群资源状态同步进关系数据库
 - 不要在 spec 里写实现细节（类名、库选型、步骤）
 - 不要在没有说明的情况下扩大范围（CI/CD、服务网格、集群生命周期都不是本项目）

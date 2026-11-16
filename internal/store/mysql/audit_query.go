@@ -1,62 +1,49 @@
-package store
+package mysql
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
-	"time"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/kubedeck/kubedeck/internal/domain"
+	"github.com/kubedeck/kubedeck/internal/store"
 )
 
 const auditColumns = `id, occurred_at, request_id, actor_id, actor_subject, actor_email,
 	cluster_id, cluster_name, verb, api_group, resource, namespace, name,
-	result, result_code, latency_ms, COALESCE(host(client_ip), ''), user_agent,
+	result, result_code, latency_ms, COALESCE(client_ip, ''), user_agent,
 	body_hash, detail, prev_hash, hash`
 
-// AuditFilter 是审计查询条件；零值表示不限。
-type AuditFilter struct {
-	From         *time.Time
-	To           *time.Time
-	ActorSubject string
-	ClusterName  string
-	Resource     string
-	Result       string
-	Limit        int
-	Offset       int
-}
-
-// auditWhere 构造过滤条件并返回参数占位符。
-func auditWhere(f AuditFilter) (string, []any) {
+// auditWhere 构造过滤条件；参数按出现顺序追加。
+func auditWhere(f store.AuditFilter) (string, []any) {
 	var (
 		where []string
 		args  []any
 	)
 	add := func(cond string, v any) {
 		args = append(args, v)
-		where = append(where, fmt.Sprintf(cond, len(args)))
+		where = append(where, cond)
 	}
 	if f.From != nil {
-		add("occurred_at >= $%d", f.From.UTC())
+		add("occurred_at >= ?", f.From.UTC())
 	}
 	if f.To != nil {
-		add("occurred_at < $%d", f.To.UTC())
+		add("occurred_at < ?", f.To.UTC())
 	}
 	if f.ActorSubject != "" {
-		add("actor_subject = $%d", f.ActorSubject)
+		add("actor_subject = ?", f.ActorSubject)
 	}
 	if f.ClusterName != "" {
-		add("cluster_name = $%d", f.ClusterName)
+		add("cluster_name = ?", f.ClusterName)
 	}
 	if f.Resource != "" {
-		add("resource = $%d", f.Resource)
+		add("resource = ?", f.Resource)
 	}
 	if f.Result != "" {
-		add("result = $%d", f.Result)
+		add("result = ?", f.Result)
 	}
 	if len(where) == 0 {
 		return "", args
@@ -65,26 +52,25 @@ func auditWhere(f AuditFilter) (string, []any) {
 }
 
 // CountAudit 返回满足条件的记录数。
-func (s *Store) CountAudit(ctx context.Context, f AuditFilter) (int, error) {
+func (s *Store) CountAudit(ctx context.Context, f store.AuditFilter) (int, error) {
 	clause, args := auditWhere(f)
 	var n int
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM audit_logs`+clause, args...).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM audit_logs`+clause, args...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("store: count audit logs: %w", err)
 	}
 	return n, nil
 }
 
 // QueryAudit 按时间倒序查询审计记录。
-// 交互分页与导出共用该入口：上限 5000，交互列表由 handler 限制为 500。
-func (s *Store) QueryAudit(ctx context.Context, f AuditFilter) ([]domain.AuditEntry, error) {
+func (s *Store) QueryAudit(ctx context.Context, f store.AuditFilter) ([]domain.AuditEntry, error) {
 	clause, args := auditWhere(f)
-	limit, offset := auditPageArgs(f.Limit, f.Offset)
+	limit, offset := store.AuditPageArgs(f.Limit, f.Offset)
 	args = append(args, limit, offset)
 
-	sql := fmt.Sprintf(`SELECT %s FROM audit_logs%s ORDER BY occurred_at DESC, id DESC LIMIT $%d OFFSET $%d`,
-		auditColumns, clause, len(args)-1, len(args))
+	query := `SELECT ` + auditColumns + ` FROM audit_logs` + clause +
+		` ORDER BY occurred_at DESC, id DESC LIMIT ? OFFSET ?`
 
-	rows, err := s.pool.Query(ctx, sql, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: query audit logs: %w", err)
 	}
@@ -101,19 +87,7 @@ func (s *Store) QueryAudit(ctx context.Context, f AuditFilter) ([]domain.AuditEn
 	return entries, mapError(rows.Err())
 }
 
-// auditPageArgs 是审计专用分页：导出需要一次取回较大结果，不能套用用户列表的 500 上限。
-func auditPageArgs(limit, offset int) (int, int) {
-	const maxAuditPage = 5000
-	if limit <= 0 || limit > maxAuditPage {
-		limit = 100
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	return limit, offset
-}
-
-func scanAuditEntry(row pgx.Row) (domain.AuditEntry, error) {
+func scanAuditEntry(row rowScanner) (domain.AuditEntry, error) {
 	var (
 		e      domain.AuditEntry
 		detail []byte
@@ -122,7 +96,7 @@ func scanAuditEntry(row pgx.Row) (domain.AuditEntry, error) {
 		&e.ClusterID, &e.ClusterName, &e.Verb, &e.APIGroup, &e.Resource, &e.Namespace, &e.ObjectName,
 		&e.Result, &e.ResultCode, &e.LatencyMS, &e.ClientIP, &e.UserAgent,
 		&e.BodyHash, &detail, &e.PrevHash, &e.Hash)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return domain.AuditEntry{}, domain.ErrNotFound
 	}
 	if err != nil {

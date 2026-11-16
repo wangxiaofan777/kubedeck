@@ -244,9 +244,11 @@ cd web && npm run dev   # http://localhost:5173
 
 需要平台元数据表（集群登记、用户、审计）时，启动前先按 §7.3 加载数据库连接串。
 
-### 7.3 本地 PostgreSQL（平台元数据与审计）
+### 7.3 本地数据库（平台元数据与审计）
 
-平台元数据（用户、集群登记、凭据密文、角色绑定、审计）存 PostgreSQL；集群资源状态一律不入库。本机 WSL 内已装 PostgreSQL 18（生产要求 15+）。
+平台元数据（用户、集群登记、凭据密文、角色绑定、审计）存 PostgreSQL 或 MySQL；集群资源状态一律不入库。本机 WSL 内已装 PostgreSQL 18（生产要求 15+）；MySQL 8 通过 Docker 启动。
+
+#### PostgreSQL（默认）
 
 初始化角色与库（幂等，可重复执行）：
 
@@ -273,9 +275,32 @@ wsl.exe -d Ubuntu -u root -- bash -lc '
 ```bash
 wsl.exe -d Ubuntu -u root -- bash -lc '
   cd /mnt/d/AI_Coding/kubedeck && set -a && . ./.testenv/db.env && set +a &&
-  /usr/local/go/bin/go test ./internal/store/ -v
+  /usr/local/go/bin/go test ./internal/store/postgres/ -v
 '
 ```
+
+#### MySQL 8
+
+用 Docker 启动仅绑定本机的测试实例（容器名 `kubedeck-mysql-dev`，端口 3307），创建 `kubedeck` / `kubedeck_test` 两个库并写入 `.testenv/mysql.env`：
+
+```bash
+wsl.exe -d Ubuntu -u root -- bash -lc 'cd /mnt/d/AI_Coding/kubedeck && MYSQL_PORT=3307 bash scripts/dev-db-mysql.sh'
+```
+
+脚本会开启 `log_bin_trust_function_creators=1`（审计只追加触发器需要）。带 MySQL 启动服务：
+
+```bash
+set -a; . ./.testenv/mysql.env; set +a
+KUBEDECK_DB_DRIVER=mysql KUBEDECK_DEV_KUBECONFIG=./.testenv/k3s.yaml ./bin/kubedeck
+```
+
+MySQL 数据层集成测试（同一套一致性用例，库名必须包含 `kubedeck_test`）：
+
+```bash
+make test-db-mysql
+```
+
+两种引擎同时验证：`make test-db-all`（需要 `.testenv/db.env` 与 `.testenv/mysql.env` 都已就绪）。
 
 主密钥用于集群凭据加密（design D7），通过 `KUBEDECK_MASTER_KEY`（base64 编码的 32 字节）与 `KUBEDECK_MASTER_KEY_VERSION` 注入；轮换期间用 `KUBEDECK_PREVIOUS_MASTER_KEY` / `KUBEDECK_PREVIOUS_MASTER_KEY_VERSION` 保留旧密钥解密存量密文。生成示例：`openssl rand -base64 32`。主密钥只经环境变量或密钥管理系统注入，不写进仓库，也不入库。
 

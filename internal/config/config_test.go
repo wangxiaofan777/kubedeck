@@ -195,3 +195,42 @@ func TestLoadRejectsInvalidDevPlatformAdmin(t *testing.T) {
 		t.Fatal("expected error for invalid dev platform admin value")
 	}
 }
+
+func TestValidateDatabaseDriver(t *testing.T) {
+	cfg := validConfig()
+	cfg.DatabaseURL = "mysql://user:pass@127.0.0.1:3306/kubedeck"
+	cfg.DatabaseDriver = "mysql"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("mysql driver should be valid: %v", err)
+	}
+
+	cfg.DatabaseDriver = "postgres"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("driver/scheme conflict must be rejected, got %v", err)
+	}
+
+	cfg.DatabaseDriver = "sqlite"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("unsupported driver must be rejected, got %v", err)
+	}
+
+	// 无协议的连接串保持向后兼容，默认为 PostgreSQL。
+	cfg = validConfig()
+	cfg.DatabaseURL = "host=127.0.0.1 port=5432 dbname=kubedeck"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("keyword DSN should remain valid: %v", err)
+	}
+}
+
+func TestLoadAppliesDatabaseDriverEnv(t *testing.T) {
+	t.Setenv("KUBEDECK_DEV_KUBECONFIG", "/tmp/kubeconfig")
+	t.Setenv("KUBEDECK_DATABASE_URL", "")
+	t.Setenv("KUBEDECK_DB_DRIVER", " MySQL ")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DatabaseDriver != "mysql" {
+		t.Fatalf("driver = %q, want mysql", cfg.DatabaseDriver)
+	}
+}

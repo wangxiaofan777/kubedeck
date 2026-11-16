@@ -9,6 +9,7 @@
 - [ ] `tasks.md` 勾选与实际验收证据一致，没有把未验证项标记完成。
 - [ ] `make check` 通过（gofmt/vet/staticcheck/单测/前端 lint/typecheck）。
 - [ ] `make test-db` 在真实 PostgreSQL 上通过（不静默跳过）。
+- [ ] `make test-db-mysql` 在真实 MySQL 8 上通过（不静默跳过）。
 - [ ] 前端 `npm run build` 成功；`go:embed all:dist` 有产物。
 - [ ] `go mod tidy` 无未提交差异；依赖漏洞扫描无 critical/high。
 

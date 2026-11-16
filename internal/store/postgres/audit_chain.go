@@ -1,23 +1,16 @@
-package store
+package postgres
 
 import (
 	"context"
 	"fmt"
-)
 
-// ChainStatus 是哈希链校验结果。Truncated 表示最早的分区已被保留策略删除，
-// 校验从第一条存活记录开始，不能据此判断更早的历史是否被篡改。
-type ChainStatus struct {
-	Checked    int    `json:"checked"`
-	BrokenID   int64  `json:"brokenId,omitempty"`
-	BrokenKind string `json:"brokenKind,omitempty"`
-	Truncated  bool   `json:"truncated,omitempty"`
-}
+	"github.com/kubedeck/kubedeck/internal/store"
+)
 
 // VerifyAuditChain 逐条重算哈希并检查前后衔接，返回第一个断裂点（如有）。
 // 保留期删除最老分区后，第一条存活记录的 prev_hash 指向已删除的记录；
 // 这种情况标记 Truncated 并继续校验存活区间，而不是误报为篡改。
-func (s *Store) VerifyAuditChain(ctx context.Context) (ChainStatus, error) {
+func (s *Store) VerifyAuditChain(ctx context.Context) (store.ChainStatus, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, hash, prev_hash,
 		       audit_log_hash(occurred_at, request_id, actor_id, actor_subject, actor_email,
@@ -26,12 +19,12 @@ func (s *Store) VerifyAuditChain(ctx context.Context) (ChainStatus, error) {
 		                      body_hash, detail, prev_hash) AS computed
 		FROM audit_logs ORDER BY id`)
 	if err != nil {
-		return ChainStatus{}, fmt.Errorf("store: verify audit chain: %w", err)
+		return store.ChainStatus{}, fmt.Errorf("store: verify audit chain: %w", err)
 	}
 	defer rows.Close()
 
 	var (
-		status ChainStatus
+		status store.ChainStatus
 		prev   string
 		first  = true
 	)
@@ -43,7 +36,7 @@ func (s *Store) VerifyAuditChain(ctx context.Context) (ChainStatus, error) {
 			computed string
 		)
 		if err := rows.Scan(&id, &hash, &prevHash, &computed); err != nil {
-			return ChainStatus{}, fmt.Errorf("store: scan audit chain row: %w", err)
+			return store.ChainStatus{}, fmt.Errorf("store: scan audit chain row: %w", err)
 		}
 		status.Checked++
 		if first {

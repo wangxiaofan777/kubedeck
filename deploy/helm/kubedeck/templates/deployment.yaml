@@ -85,21 +85,31 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if .Values.dev.enabled }}
+          {{- if or .Values.dev.enabled .Values.extraVolumeMounts }}
           volumeMounts:
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- if .Values.dev.enabled }}
             - name: dev-kubeconfig
               mountPath: {{ .Values.dev.mountPath }}
               subPath: {{ .Values.dev.kubeconfigKey }}
               readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if .Values.dev.enabled }}
+      {{- if or .Values.dev.enabled .Values.extraVolumes }}
       volumes:
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.dev.enabled }}
         - name: dev-kubeconfig
           secret:
             secretName: {{ required "dev.kubeconfigSecret is required when dev.enabled=true" .Values.dev.kubeconfigSecret }}
             items:
               - key: {{ .Values.dev.kubeconfigKey }}
                 path: {{ .Values.dev.kubeconfigKey }}
+        {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

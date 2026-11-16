@@ -50,7 +50,7 @@
 
 ### 凭据
 
-- AES-256-GCM 加密后存 PostgreSQL；主密钥只在进程内存与 Secret 中。
+- AES-256-GCM 加密后存平台元数据库（PostgreSQL/MySQL）；主密钥只在进程内存与 Secret 中。
 - 凭据接口只返回元数据；日志不打印 kubeconfig/token。
 - 审计只保存请求体 SHA-256 摘要，不保存明文。
 - Secret 的 YAML 视图会显示明文（这是功能），因此 Secret 的 `get` 权限必须严格控制。

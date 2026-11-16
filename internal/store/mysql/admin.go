@@ -1,0 +1,89 @@
+package mysql
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/kubedeck/kubedeck/internal/domain"
+)
+
+// BootstrapAdmin 创建（或提升）首个平台管理员。
+// 已存在管理员时返回 domain.ErrConflict，不修改任何账号。
+func (s *Store) BootstrapAdmin(ctx context.Context, subject, email, displayName string) (domain.User, error) {
+	if subject == "" {
+		return domain.User{}, fmt.Errorf("%w: subject is required", domain.ErrInvalid)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.User{}, fmt.Errorf("store: begin bootstrap: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var lockName string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT name FROM store_locks WHERE name = 'bootstrap' FOR UPDATE`).Scan(&lockName); err != nil {
+		return domain.User{}, fmt.Errorf("store: lock bootstrap: %w", err)
+	}
+	var admins int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM users WHERE is_platform_admin = TRUE AND status = 'active'`).Scan(&admins); err != nil {
+		return domain.User{}, fmt.Errorf("store: count bootstrap admins: %w", err)
+	}
+	if admins > 0 {
+		return domain.User{}, domain.ErrConflict
+	}
+
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO users (subject, email, display_name, source, is_platform_admin, last_login_at)
+		VALUES (?, ?, ?, 'local', TRUE, UTC_TIMESTAMP(6)) AS new
+		ON DUPLICATE KEY UPDATE
+			id = LAST_INSERT_ID(id),
+			email = COALESCE(NULLIF(new.email, ''), users.email),
+			display_name = COALESCE(NULLIF(new.display_name, ''), users.display_name),
+			is_platform_admin = TRUE,
+			status = 'active'`, subject, email, displayName)
+	if err != nil {
+		return domain.User{}, mapError(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return domain.User{}, fmt.Errorf("store: bootstrap admin id: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.User{}, fmt.Errorf("store: commit bootstrap: %w", err)
+	}
+	return s.UserByID(ctx, id)
+}
+
+// SearchUsers 按 subject/email/display_name 模糊查询，供权限管理界面选择用户。
+func (s *Store) SearchUsers(ctx context.Context, query string, limit int) ([]domain.User, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	q := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+userColumns+` FROM users
+		WHERE LOWER(subject) LIKE ? OR LOWER(email) LIKE ? OR LOWER(display_name) LIKE ?
+		ORDER BY display_name, id
+		LIMIT ?`, q, q, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: search users: %w", err)
+	}
+	defer rows.Close()
+
+	users := make([]domain.User, 0, limit)
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, mapError(rows.Err())
+}
+
+// AllRoleBindings 返回全部绑定，按集群、用户、命名空间排序。
+func (s *Store) AllRoleBindings(ctx context.Context) ([]domain.RoleBinding, error) {
+	return s.queryBindings(ctx, bindingSelect+` ORDER BY c.name, rb.user_id, rb.namespace`)
+}

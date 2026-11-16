@@ -1,12 +1,12 @@
 # 备份与恢复
 
-KubeDeck 的持久化状态只有 PostgreSQL：平台用户、集群登记、加密凭据、角色绑定与审计日志。集群资源状态不在数据库中。
+KubeDeck 的持久化状态只有平台元数据库（PostgreSQL 或 MySQL）：平台用户、集群登记、加密凭据、角色绑定与审计日志。集群资源状态不在数据库中。
 
 ## 1. 备份对象
 
 | 对象 | 方式 | 说明 |
 |---|---|---|
-| PostgreSQL | `pg_dump` / PITR | 平台元数据与审计 |
+| 数据库（PostgreSQL 或 MySQL） | `pg_dump` / `mysqldump` / PITR | 平台元数据与审计 |
 | 主密钥 | Vault/KMS/离线保管 | 丢失后已登记集群凭据无法解密 |
 | Helm values | Git/配置库（不含明文 Secret） | 便于重建 release |
 | Secret | 外部 Secret 管理系统 | 数据库密码、OIDC secret、主密钥 |
@@ -23,6 +23,15 @@ pg_dump --format=custom --no-owner --no-privileges \
 
 建议每日全量 + 持续 WAL 归档（PITR）。审计表按月分区，备份工具需要支持分区表；`pg_dump` 会包含所有分区。
 
+MySQL 8 使用 `mysqldump`（保留触发器与事件；`--single-transaction` 保证一致性快照）：
+
+```bash
+mysqldump --single-transaction --routines --triggers --no-tablespaces \
+  -h mysql.example.com -u kubedeck -p kubedeck > kubedeck-$(date +%F).sql
+```
+
+建议同时开启 binlog 并按时间点恢复（PITR）。审计表使用 `RANGE COLUMNS` 月分区，逻辑备份会包含各分区数据；恢复后由启动时的分区维护补齐未来月份。
+
 ## 3. 恢复
 
 1. 停止 Kubedeck（缩容到 0），避免恢复期间写入。
@@ -31,6 +40,13 @@ pg_dump --format=custom --no-owner --no-privileges \
 ```bash
 createdb -h pg.example.com -U postgres kubedeck_restore
 pg_restore --no-owner --no-privileges --dbname=kubedeck_restore kubedeck-2026-11-12.dump
+```
+
+MySQL：
+
+```bash
+mysql -h mysql.example.com -u root -p -e 'CREATE DATABASE kubedeck_restore CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci'
+mysql -h mysql.example.com -u root -p kubedeck_restore < kubedeck-2026-11-12.sql
 ```
 
 3. 确认 `schema_migrations`、`clusters`、`users`、`audit_logs` 行数与备份前一致。

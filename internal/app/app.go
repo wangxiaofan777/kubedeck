@@ -19,6 +19,8 @@ import (
 	"github.com/kubedeck/kubedeck/internal/kube"
 	"github.com/kubedeck/kubedeck/internal/metrics"
 	"github.com/kubedeck/kubedeck/internal/store"
+	"github.com/kubedeck/kubedeck/internal/store/mysql"
+	"github.com/kubedeck/kubedeck/internal/store/postgres"
 )
 
 const (
@@ -64,7 +66,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	// 数据库关闭时不能把 typed-nil 的 *store.Store 装进接口，否则 nil 判断失效。
+	// 数据库关闭时 clusterStore 保持 nil 接口，避免下游拿到空实现。
 	var clusterStore cluster.Store
 	if st != nil {
 		clusterStore = st
@@ -90,8 +92,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		BootstrapToken: cfg.BootstrapToken,
 		CookieSecure:   !cfg.CookieInsecure,
 	}
-	// 无数据库时不得把 typed-nil 的 *store.Store 传给审计 writer：
-	// 接口值非 nil 会让 Record 入队并在 flush 时解引用空指针。
+	// 无数据库时不创建审计 writer：否则 Record 入队后会在 flush 时访问空存储。
 	var auditWorker *audit.Writer
 	if st != nil {
 		auditWorker = audit.NewWriter(st, logger)
@@ -188,7 +189,7 @@ func authMode(cfg config.Config) string {
 }
 
 // openDatabase 连接数据库并应用迁移；未配置连接串时返回 nil（仅 dev 模式允许）。
-func openDatabase(ctx context.Context, cfg config.Config, logger *slog.Logger) (*store.Store, error) {
+func openDatabase(ctx context.Context, cfg config.Config, logger *slog.Logger) (store.Store, error) {
 	if cfg.DatabaseURL == "" {
 		logger.Warn("database not configured; platform metadata and audit are disabled")
 		return nil, nil
@@ -197,15 +198,27 @@ func openDatabase(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 	bootCtx, cancel := context.WithTimeout(ctx, bootstrapTimeout)
 	defer cancel()
 
-	st, err := store.Open(bootCtx, cfg.DatabaseURL)
+	driver, err := store.ResolveDriver(cfg.DatabaseURL, cfg.DatabaseDriver)
+	if err != nil {
+		return nil, err
+	}
+	var st store.Store
+	switch driver {
+	case store.DriverPostgres:
+		st, err = postgres.Open(bootCtx, cfg.DatabaseURL)
+	case store.DriverMySQL:
+		st, err = mysql.Open(bootCtx, cfg.DatabaseURL)
+	default:
+		return nil, fmt.Errorf("unsupported database driver %q", driver)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	if err := store.Migrate(bootCtx, st.Pool()); err != nil {
+	if err := st.Migrate(bootCtx); err != nil {
 		st.Close()
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}
-	versions, err := store.AppliedMigrations(bootCtx, st.Pool())
+	versions, err := st.AppliedMigrations(bootCtx)
 	if err != nil {
 		st.Close()
 		return nil, fmt.Errorf("read migrations: %w", err)
@@ -215,13 +228,13 @@ func openDatabase(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 		st.Close()
 		return nil, fmt.Errorf("ensure audit partitions: %w", err)
 	}
-	logger.Info("database ready", "migrations", versions, "audit_partitions", partitions)
+	logger.Info("database ready", "driver", st.Driver(), "migrations", versions, "audit_partitions", partitions)
 	return st, nil
 }
 
 // buildAuth 构造认证服务。开发模式使用本地身份（显式配置才启用）；
 // 生产模式从 OIDC discovery 开始，IdP 不可达时启动失败。
-func buildAuth(ctx context.Context, cfg config.Config, st *store.Store, logger *slog.Logger) (*auth.Service, *auth.MemorySessions, error) {
+func buildAuth(ctx context.Context, cfg config.Config, st store.Store, logger *slog.Logger) (*auth.Service, *auth.MemorySessions, error) {
 	sessions := auth.NewMemorySessions(cfg.MaxSessionsPerUser, time.Duration(cfg.SessionTTLHours)*time.Hour)
 
 	if cfg.DevKubeconfig != "" {
@@ -294,7 +307,7 @@ func buildRegistry(cfg config.Config, logger *slog.Logger) (*kube.Registry, erro
 
 // auditMaintenance 补齐审计分区，并按保留期清理过期分区。
 // 保留期配置读取失败时只告警并跳过删除，避免用默认值误删数据。
-func auditMaintenance(ctx context.Context, st *store.Store, logger *slog.Logger) {
+func auditMaintenance(ctx context.Context, st store.Store, logger *slog.Logger) {
 	ticker := time.NewTicker(auditCheckPeriod)
 	defer ticker.Stop()
 

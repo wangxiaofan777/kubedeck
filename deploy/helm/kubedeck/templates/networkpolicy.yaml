@@ -19,5 +19,10 @@ spec:
   {{- with .Values.networkPolicy.egress }}
   egress:
     {{- toYaml . | nindent 4 }}
+    {{- if eq (default "postgres" $.Values.database.driver) "mysql" }}
+    - ports:
+        - protocol: TCP
+          port: 3306
+    {{- end }}
   {{- end }}
 {{- end }}

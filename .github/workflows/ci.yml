@@ -30,14 +30,32 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: kubedeck_root_ci
+          MYSQL_DATABASE: kubedeck_test
+          MYSQL_USER: kubedeck
+          MYSQL_PASSWORD: kubedeck_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pkubedeck_root_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       KUBEDECK_TEST_DATABASE_URL: postgres://kubedeck:kubedeck_ci@127.0.0.1:5432/kubedeck_test?sslmode=disable
+      KUBEDECK_TEST_MYSQL_URL: mysql://kubedeck:kubedeck_ci@127.0.0.1:3306/kubedeck_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
           cache: true
+
+      - name: enable mysql triggers
+        run: mysql -h127.0.0.1 -uroot -pkubedeck_root_ci -e "SET GLOBAL log_bin_trust_function_creators = 1"
 
       - name: gofmt
         run: |

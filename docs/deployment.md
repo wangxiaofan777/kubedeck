@@ -6,7 +6,7 @@
 
 ## 非 Kubernetes 部署（Docker Compose）
 
-如果目标环境没有 Kubernetes，使用 [`deploy/compose/`](../deploy/compose/README.md)：KubeDeck + PostgreSQL + Caddy，一条 `docker compose up -d --build` 启动。
+如果目标环境没有 Kubernetes，使用 [`deploy/compose/`](../deploy/compose/README.md)：KubeDeck + PostgreSQL（或 MySQL 8）+ Caddy，一条 `docker compose up -d --build` 启动。
 
 适用与边界：
 
@@ -17,26 +17,50 @@
 
 Compose 的密钥、备份、WSL/Docker Desktop 网络与故障排查见 [Compose 部署说明](../deploy/compose/README.md)。
 
+## 离线部署
+
+目标机器不能访问公网（Docker Hub、npm、Go 模块代理、ACME）时，不要直接在目标机执行本文的 `docker build` 或 `helm install --set image.repository=...`。先在联网机用 [`scripts/offline-bundle.sh`](../scripts/offline-bundle.sh) 构建并导出镜像，再在目标机校验、导入后按本文同样的配置安装。
+
+应用镜像约 68 MB（gzip 后约 16 MB），Helm 场景只需传输这一份；Compose 完整包还包含 PostgreSQL 与 Caddy，约 157 MB（需要随包携带 MySQL 8 时使用 `--with-mysql`）。镜像导入、containerd/内网 registry、内部 CA 与离线 OIDC 的完整步骤见 [offline-deployment.md](offline-deployment.md)。
+
 ## 1. 前置条件
 
 | 组件 | 要求 |
 |---|---|
 | Kubernetes | 1.34–1.37（低于 1.34 拒绝接入） |
-| PostgreSQL | 15+，数据库 `kubedeck`，独立账号 |
+| 数据库 | PostgreSQL 15+（默认）或 MySQL 8.0.20+，数据库 `kubedeck`，独立账号 |
 | OIDC IdP | 支持授权码 + PKCE，能提供 `sub`、`email`、`groups` |
 | 入口 | HTTPS（生产 Cookie 必须 Secure） |
 | 镜像 | 由 `Dockerfile` 构建并推送到私有仓库 |
 
-KubeDeck 不把集群资源状态写入 PostgreSQL；数据库只保存平台元数据、角色绑定与审计。请为数据库配置备份与保留策略。
+KubeDeck 不把集群资源状态写入数据库；数据库只保存平台元数据、角色绑定与审计。请为数据库配置备份与保留策略。
+
+引擎通过 `KUBEDECK_DATABASE_URL` 的协议前缀识别（`postgres://` / `mysql://`），也可以显式设置 `KUBEDECK_DB_DRIVER=postgres|mysql`；两者冲突或驱动不受支持时进程拒绝启动。切换引擎视为新库初始化，不提供跨引擎数据迁移。
 
 ## 2. 准备数据库
+
+PostgreSQL：
 
 ```sql
 CREATE ROLE kubedeck LOGIN PASSWORD '<强随机密码>';
 CREATE DATABASE kubedeck OWNER kubedeck;
 ```
 
-迁移由进程启动时自动执行，不需要单独跑 job。首次启动会创建审计分区。应用账号需要在该库内建表、建分区的权限。
+MySQL 8：
+
+```sql
+CREATE DATABASE kubedeck CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE USER 'kubedeck'@'%' IDENTIFIED BY '<强随机密码>';
+GRANT ALL PRIVILEGES ON kubedeck.* TO 'kubedeck'@'%';
+-- 审计只追加依赖触发器；开启 binlog 时必须由管理员设置：
+SET GLOBAL log_bin_trust_function_creators = 1;
+```
+
+MySQL 的 `log_bin_trust_function_creators` 也可以在参数组/my.cnf 中持久化。未开启时，迁移会在创建审计触发器时失败并给出明确提示。
+
+MySQL 长期停机超过预创建窗口（当前 3 个月）时，新写入的审计行会进入 `audit_logs_max` 兜底分区；保留策略不会删除兜底分区，恢复后请按需手工拆分/归档。正常运行时启动与每日维护会补齐未来月份分区。
+
+迁移由进程启动时自动执行，不需要单独跑 job。首次启动会创建审计分区。应用账号需要在该库内建表、建触发器、建分区的权限。MySQL 的 DDL 会隐式提交，迁移文件按幂等方式编写，失败后重跑即可继续。
 
 ## 3. 生成主密钥
 
@@ -94,6 +118,14 @@ kubectl -n kubedeck-system create secret generic kubedeck-secrets \
 
 然后 `--set secrets.existingSecret=kubedeck-secrets`。如果不用外部 Secret，也可以设置 `secrets.databaseUrl`、`secrets.masterKey`、`secrets.oidcClientSecret`，由 chart 创建 Secret；这种方式会让值进入 Helm release 元数据，生产环境不推荐。
 
+MySQL 连接串示例（同时设置 `database.driver=mysql`）：
+
+```bash
+--from-literal=KUBEDECK_DATABASE_URL='mysql://kubedeck:<password>@mysql.example.com:3306/kubedeck'
+```
+
+MySQL 密码中避免 `@ : / ? #` 等 URL 保留字符；如必须使用，请做 URL 编码。也可以直接使用驱动原生 DSN 并显式设置 `KUBEDECK_DB_DRIVER=mysql`。
+
 ## 6. 安装
 
 先渲染检查：
@@ -143,7 +175,7 @@ helm upgrade --install kubedeck deploy/helm/kubedeck \
 --set serviceMonitor.enabled=true   # 需要 Prometheus Operator CRD
 ```
 
-`networkPolicy.enabled=true` 时默认只放行 DNS 与 5432/6443/443 出站；入站规则为空表示拒绝所有入站，请按入口控制器补充 `networkPolicy.ingress`。
+`networkPolicy.enabled=true` 时默认只放行 DNS 与 5432/6443/443 出站；`database.driver=mysql` 时会额外放行 3306。入站规则为空表示拒绝所有入站，请按入口控制器补充 `networkPolicy.ingress`。
 
 ## 7. 创建首个平台管理员
 

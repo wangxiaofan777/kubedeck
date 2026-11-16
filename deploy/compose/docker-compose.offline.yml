@@ -1,0 +1,26 @@
+# 离线部署覆盖文件：与 docker-compose.yml 叠加使用。
+#
+#   KUBEDECK_IMAGE=kubedeck:0.1.0 \
+#     docker compose -f docker-compose.yml -f docker-compose.offline.yml up -d --no-build
+#
+# 约束：
+# - 镜像必须已通过 load-images.sh 导入，禁止现场构建或拉取；
+# - Caddy 改用内部 CA（Caddyfile.offline），不再访问 ACME；
+# - 数据卷与基础文件保持一致，避免覆盖后丢数据。
+services:
+  kubedeck:
+    # 去掉基础文件中的 build 段，防止缺镜像时现场构建（需要联网）。
+    build: !reset null
+    pull_policy: never
+
+  db:
+    pull_policy: never
+
+  proxy:
+    pull_policy: never
+    volumes:
+      - ./Caddyfile.offline:/etc/caddy/Caddyfile:ro
+      # 使用企业 CA 时把证书放到 ./certs，并在 Caddyfile.offline 中引用。
+      - ./certs:/etc/caddy/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config

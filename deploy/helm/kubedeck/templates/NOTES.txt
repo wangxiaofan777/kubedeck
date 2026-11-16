@@ -20,6 +20,7 @@ KubeDeck 已安装到命名空间 {{ .Release.Namespace }}。
 
 {{- if .Values.secrets.existingSecret }}
 使用已有 Secret：{{ .Values.secrets.existingSecret }}。请确认包含 KUBEDECK_DATABASE_URL 与 KUBEDECK_MASTER_KEY。
+数据库驱动由 database.driver 指定（当前：{{ .Values.database.driver }}）；MySQL 部署请使用 mysql:// 连接串，并确保 NetworkPolicy 放行 3306。
 {{- else if not .Values.secrets.masterKey }}
 警告：未设置 secrets.masterKey，Pod 会因主密钥缺失而启动失败。请通过 --set 或 values 文件提供。
 {{- end }}

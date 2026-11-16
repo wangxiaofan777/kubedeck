@@ -1,8 +1,8 @@
-// Package store 负责 PostgreSQL 连接、迁移与平台元数据的持久化。
+// Package postgres 负责 PostgreSQL 连接、迁移与平台元数据的持久化。
 //
 // 只存平台元数据（用户、集群、凭据密文、角色绑定、审计），
 // 集群资源状态一律不入库（design D6）。
-package store
+package postgres
 
 import (
 	"context"
@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 //go:embed migrations/*.sql
@@ -28,8 +27,8 @@ const migrationLockKey int64 = 0x6b6465636b // "kdeck"
 
 // Migrate 按文件名顺序应用尚未执行的迁移，每个文件在同一个事务内完成。
 // 已应用的迁移会校验文件校验和：内容被改动时停止启动，避免环境间 schema 漂移。
-func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	conn, err := pool.Acquire(ctx)
+func (s *Store) Migrate(ctx context.Context) error {
+	conn, err := s.pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire connection: %w", err)
 	}
@@ -110,8 +109,8 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 }
 
 // AppliedMigrations 返回已应用的迁移版本，供启动日志与测试断言使用。
-func AppliedMigrations(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
-	rows, err := pool.Query(ctx, "SELECT version FROM schema_migrations ORDER BY version")
+func (s *Store) AppliedMigrations(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, "SELECT version FROM schema_migrations ORDER BY version")
 	if err != nil {
 		return nil, fmt.Errorf("query schema_migrations: %w", err)
 	}

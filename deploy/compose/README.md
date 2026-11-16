@@ -1,6 +1,6 @@
 # Docker Compose 单机部署
 
-本目录提供 KubeDeck 的非 Kubernetes 部署方式：KubeDeck + PostgreSQL + Caddy TLS 反向代理。适合单机、小团队、演示和边缘环境。
+本目录提供 KubeDeck 的非 Kubernetes 部署方式：KubeDeck + PostgreSQL（或 MySQL 8）+ Caddy TLS 反向代理。适合单机、小团队、演示和边缘环境。
 
 > 应用固定 **单副本**。会话保存在进程内存，后台任务没有选主；共享会话存储尚未实现，因此 Helm Chart 同样限制为单副本。需要多副本/高可用前必须先扩展会话存储。
 
@@ -49,7 +49,20 @@ curl -fsS https://kubedeck.example.com/readyz
 docker compose logs -f kubedeck
 ```
 
-`/readyz` 会检查 PostgreSQL；数据库未就绪时返回 503。容器健康检查由镜像内的 `/healthcheck` 完成，不依赖 shell/curl。
+`/readyz` 会检查数据库；数据库未就绪时返回 503。容器健康检查由镜像内的 `/healthcheck` 完成，不依赖 shell/curl。
+
+### MySQL 8 变体
+
+PostgreSQL 仍是默认。改用 MySQL 8 时使用独立清单与环境示例：
+
+```bash
+cd deploy/compose
+cp .env.mysql.example .env && chmod 600 .env
+# 至少填写 KUBEDECK_DOMAIN、MYSQL_PASSWORD、MYSQL_ROOT_PASSWORD、主密钥与 OIDC 配置
+docker compose -f docker-compose.mysql.yml up -d --build
+```
+
+清单已为 MySQL 开启 `log_bin_trust_function_creators=1`（审计只追加触发器需要）；连接串由 Compose 注入，无需手工设置 `KUBEDECK_DB_DRIVER`。切换引擎不迁移旧数据，需重新登记集群与权限。
 
 ## 3. 首次登录与引导管理员
 
@@ -93,7 +106,7 @@ curl -X POST https://kubedeck.example.com/api/v1/clusters \
   }'
 ```
 
-凭据会用主密钥加密后写入 PostgreSQL。平台只接受 `https://` apiserver，拒绝 `169.254.0.0/16`，并拒绝 kubeconfig 中的 `exec`/`auth-provider`。
+凭据会用主密钥加密后写入数据库。平台只接受 `https://` apiserver，拒绝 `169.254.0.0/16`，并拒绝 kubeconfig 中的 `exec`/`auth-provider`。
 
 被管理集群需要一个只授予 `impersonate` 的 ServiceAccount/ClusterRole，参考 [`docs/permission-matrix.md`](../../docs/permission-matrix.md) 与 Helm chart 中的 `serviceaccount-rbac.yaml`。不要把 `cluster-admin` 交给平台。
 
@@ -131,10 +144,18 @@ docker run --rm curlimages/curl -vk https://<可达地址>:6443/version
 
 ## 8. 备份与恢复
 
-数据库备份：
+PostgreSQL 备份：
 
 ```bash
 docker compose exec -T db pg_dump -U kubedeck -Fc kubedeck > kubedeck-$(date +%F).dump
+```
+
+MySQL 8 备份（使用 MySQL 清单时）：
+
+```bash
+docker compose -f docker-compose.mysql.yml exec -T db \
+  mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers kubedeck \
+  > kubedeck-$(date +%F).sql
 ```
 
 恢复（先停应用，避免写入）：
@@ -179,16 +200,17 @@ PY
 - `.env` 权限保持 `0600`，不要提交仓库；`.gitignore` 已忽略 `deploy/compose/.env`。
 - 环境变量会被 `docker inspect` 和拥有 Docker 权限的用户读取。生产更严格时应使用外部 Secret 管理系统；当前版本不支持 `_FILE` 形式的密钥注入。
 - 主密钥只放在受控主机或 Vault/KMS，不要写进镜像、Helm values 或聊天记录。
-- 不要把 8080、5432 映射到公网；不要在生产使用开发模式。
+- 不要把 8080、5432/3306 映射到公网；不要在生产使用开发模式。
 - `/metrics` 无鉴权，只允许内网抓取。
 
 ## 12. 故障排查
 
 | 现象 | 排查 |
 |---|---|
-| `db` 一直 unhealthy | `docker compose logs db`；确认密码与卷中的旧数据一致；旧卷不会因改 `.env` 自动改密码 |
+| `db` 一直 unhealthy | `docker compose logs db`；确认密码与卷中的旧数据一致；旧卷不会因改 `.env` 自动改密码。MySQL 还可用 `mysqladmin ping` 检查 |
 | 应用反复重启 | `docker compose logs kubedeck`；检查主密钥是否为 32 字节 base64、数据库 URL 是否正确、OIDC 是否可达 |
 | `/readyz` 返回 503 | 数据库连接失败或迁移未完成；先看 `db` 健康状态 |
+| MySQL 启动报触发器权限错误 | 确认服务端 `log_bin_trust_function_creators=1`，或让迁移账号具备 SUPER（不推荐） |
 | 登录后立即掉线 | 是否通过 HTTPS 访问；`KUBEDECK_COOKIE_INSECURE=false` 时 Secure Cookie 不会在 HTTP 下发送 |
 | OIDC 回调报错 | `KUBEDECK_OIDC_REDIRECT_URL` 与 IdP 登记值是否完全一致；域名是否与 issuer 匹配 |
 | 502/504 | 应用未就绪；`docker compose ps` 看健康状态，`docker compose logs proxy kubedeck` |
@@ -206,3 +228,17 @@ docker compose down            # 保留命名卷
 docker compose down -v         # 删除数据库与 Caddy 数据，谨慎
 docker compose config          # 渲染并检查配置
 ```
+
+## 14. 离线部署
+
+目标机不能访问 Docker Hub 时，在联网机执行 `bash scripts/offline-bundle.sh --version 0.1.0`，把 `dist/offline/` 拷到目标机，然后：
+
+```bash
+cd /opt/kubedeck-offline
+./load-images.sh
+cp env.example .env && chmod 600 .env
+# 编辑 .env，至少把 KUBEDECK_IMAGE 改成 kubedeck:0.1.0
+docker compose -f docker-compose.yml -f docker-compose.offline.yml up -d --no-build
+```
+
+离线覆盖文件做了三件事：禁止拉取与现场构建、把 Caddy 换成内部 CA（不再访问 ACME）、挂载 `./certs` 供自有证书使用。完整说明（根证书导出、containerd 导入、内网 registry、私有 CA 的 OIDC）见 [docs/offline-deployment.md](../../docs/offline-deployment.md)。

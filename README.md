@@ -25,7 +25,7 @@ MVP 功能已完成并通过本地 k3s 端到端验收（2026-11-12）：
 
 ## 快速开始
 
-前置依赖：Go 1.27、Node.js 24、PostgreSQL 15+、k3s 1.34–1.37（可选，但看资源列表需要）。
+前置依赖：Go 1.27、Node.js 24、PostgreSQL 15+ 或 MySQL 8.0.20+（默认 PostgreSQL）、k3s 1.34–1.37（可选，但看资源列表需要）。
 
 ```bash
 # 1) 初始化本地数据库（幂等；连接串写入 .testenv/db.env）
@@ -60,6 +60,22 @@ docker compose up -d --build
 
 完整步骤、集群接入与网络说明见 [deploy/compose/README.md](deploy/compose/README.md)。应用固定单副本；多副本/高可用请使用 Helm。
 
+MySQL 8 变体使用独立清单与环境示例：
+
+```bash
+cd deploy/compose
+cp .env.mysql.example .env && chmod 600 .env
+docker compose -f docker-compose.mysql.yml up -d --build
+```
+
+MySQL 部署需要开启 `log_bin_trust_function_creators=1`（审计只追加触发器），Compose 清单已内置该启动参数。
+
+### 离线 / 内网部署
+
+目标机不能访问 Docker Hub、npm 或 Go 模块代理时，在联网机执行 `make offline-bundle`（或 `bash scripts/offline-bundle.sh`）构建并导出镜像包，目标机校验后 `./load-images.sh` 导入。应用镜像约 68 MB，gzip 后约 16 MB；完整 Compose 包（含 PostgreSQL 与 Caddy）约 157 MB。需要随包携带 MySQL 8 时加 `--with-mysql`。
+
+完整流程（镜像导入、Compose/Helm、内网 TLS 与 OIDC）见 [docs/offline-deployment.md](docs/offline-deployment.md)。
+
 ## 目录结构
 
 ```
@@ -74,10 +90,10 @@ docker compose up -d --build
 │   ├── crypto/                  # AES-256-GCM 与密钥版本
 │   ├── kube/                    # ClusterTransport、Direct 实现、注册表
 │   ├── metrics/                 # Prometheus 指标
-│   └── store/                   # PostgreSQL 迁移与仓储
+│   └── store/                   # 仓储契约与 PostgreSQL/MySQL 实现
 ├── web/                         # React 控制台
 ├── deploy/helm/kubedeck/        # Helm Chart
-├── deploy/compose/              # Docker Compose 单机部署（应用 + PostgreSQL + Caddy）
+├── deploy/compose/              # Docker Compose 单机部署（应用 + PostgreSQL/MySQL + Caddy）
 ├── deploy/prometheus/           # 告警规则
 ├── docs/                        # 部署、运维、备份、安全、发布文档
 ├── verify/                      # 三项技术验证程序
@@ -93,6 +109,7 @@ docker compose up -d --build
 | `make web-dev` | Vite dev server（`/api` 代理到 8080） |
 | `make test` | 后端单元测试 |
 | `make test-db` | 数据层集成测试（真实 PostgreSQL） |
+| `make test-db-mysql` | 数据层集成测试（真实 MySQL 8） |
 | `make lint` | gofmt + `go vet` + `staticcheck` |
 | `make check` | 后端 lint/测试 + 前端 lint/typecheck |
 | `make clean` | 清理产物并保留 `internal/webui/dist/.gitkeep` |
@@ -101,18 +118,18 @@ docker compose up -d --build
 
 ## 技术栈
 
-- **后端**：Go 1.27、client-go v0.37.2（dynamic client + discovery + watch）、chi、pgx v5
+- **后端**：Go 1.27、client-go v0.37.2（dynamic client + discovery + watch）、chi、pgx v5、go-sql-driver/mysql
 - **前端**：React 18、TypeScript、Ant Design 5、TanStack Query 5、Monaco、Vite 5
-- **存储**：PostgreSQL 15+（平台元数据与审计；集群资源状态不入库）
+- **存储**：PostgreSQL 15+（默认）或 MySQL 8.0.20+，通过 `KUBEDECK_DATABASE_URL` + `KUBEDECK_DB_DRIVER` 选择；集群资源状态不入库
 - **授权**：Impersonation 透传 + Kubernetes 原生 RBAC
 - **部署**：单二进制（前端 `go:embed`）+ Docker + Helm / Docker Compose
 - **可观测性**：Prometheus `/metrics`、结构化日志、哈希链审计
 
 ## 测试与质量
 
-- 后端：`make test`；数据层集成测试需 PostgreSQL；列表压测见 `internal/api/load_test.go`。
+- 后端：`make test`；数据层集成测试需 PostgreSQL 或 MySQL 8（`make test-db` / `make test-db-mysql`）；列表压测见 `internal/api/load_test.go`。
 - 前端：ESLint + Prettier + `tsc --noEmit` + Vite build。
-- CI：后端 lint/vet/staticcheck/`go test -race` + PostgreSQL；前端 lint/typecheck/build；镜像构建。
+- CI：后端 lint/vet/staticcheck/`go test -race` + 真实 PostgreSQL 与 MySQL；前端 lint/typecheck/build；镜像构建。
 - 版本矩阵：k3s 1.34 与 1.37 实测见 [docs/local-environment.md §7.1](docs/local-environment.md)。
 
 ## OpenSpec
@@ -130,6 +147,7 @@ openspec view
 |---|---|
 | `add-kubedeck-mvp` | MVP 8 项能力：集群接入、身份授权、资源浏览、工作负载、日志、实时、审计、控制台 |
 | `refactor-engineering-baseline` | 工程基线：可复现构建、质量闸门、配置校验、就绪探测、安全头与保留期保护 |
+| `add-mysql-metadata-store` | 元数据存储可插拔：新增 MySQL 8 实现、双引擎一致性测试与部署路径 |
 
 ## 文档
 
@@ -138,7 +156,7 @@ openspec view
 | [k8s-console-design.md](k8s-console-design.md) | 产品级设计总纲（架构、API、错误码、容量估算） |
 | [docs/deployment.md](docs/deployment.md) | 生产部署、OIDC、最小权限 SA、主密钥轮换 |
 | [docs/operations.md](docs/operations.md) | 升级/回滚/故障处理/容量 |
-| [docs/backup-restore.md](docs/backup-restore.md) | PostgreSQL 备份、恢复与演练 |
+| [docs/backup-restore.md](docs/backup-restore.md) | PostgreSQL / MySQL 备份、恢复与演练 |
 | [docs/permission-matrix.md](docs/permission-matrix.md) | 平台角色 × 操作 × Kubernetes 权限 |
 | [docs/security-review.md](docs/security-review.md) | 安全自查结论与残余风险 |
 | [docs/alerting.md](docs/alerting.md) | Prometheus 指标与告警规则 |

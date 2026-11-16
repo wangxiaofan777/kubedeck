@@ -33,6 +33,9 @@ type Config struct {
 	DevPlatformAdmin bool `yaml:"dev_platform_admin"`
 	// DatabaseURL 是平台元数据库连接串；为空时不连接数据库（仅 dev 模式可用）。
 	DatabaseURL string `yaml:"database_url"`
+	// DatabaseDriver 显式指定存储引擎（postgres/mysql）。为空时按连接串协议识别，
+	// 无协议的连接串保持向后兼容，默认 postgres。
+	DatabaseDriver string `yaml:"database_driver"`
 	// MasterKey / MasterKeyVersion 是凭据加密的当前主密钥（base64 编码的 32 字节）。
 	// 主密钥来自环境变量 / KMS / Vault，绝不入库（design D7）。
 	MasterKey        string `yaml:"master_key"`
@@ -125,6 +128,9 @@ func Load() (Config, error) {
 	if v := os.Getenv("KUBEDECK_DATABASE_URL"); v != "" {
 		cfg.DatabaseURL = v
 	}
+	if v := os.Getenv("KUBEDECK_DB_DRIVER"); v != "" {
+		cfg.DatabaseDriver = v
+	}
 	if v := os.Getenv("KUBEDECK_MASTER_KEY"); v != "" {
 		cfg.MasterKey = v
 	}
@@ -199,6 +205,7 @@ func Load() (Config, error) {
 	cfg.Addr = strings.TrimSpace(cfg.Addr)
 	cfg.LogLevel = strings.ToLower(strings.TrimSpace(cfg.LogLevel))
 	cfg.DevClusterName = strings.TrimSpace(cfg.DevClusterName)
+	cfg.DatabaseDriver = strings.ToLower(strings.TrimSpace(cfg.DatabaseDriver))
 	cfg.OIDCIssuer = strings.TrimSpace(cfg.OIDCIssuer)
 	cfg.OIDCClientID = strings.TrimSpace(cfg.OIDCClientID)
 	cfg.OIDCRedirectURL = strings.TrimSpace(cfg.OIDCRedirectURL)
@@ -226,6 +233,9 @@ func (c Config) Validate() error {
 	}
 	if c.DevKubeconfig != "" && c.DevClusterName == "" {
 		return errors.New("dev_cluster_name: required when dev_kubeconfig is set")
+	}
+	if err := validateDatabase(c.DatabaseURL, c.DatabaseDriver); err != nil {
+		return err
 	}
 	// 安全底线：没有显式开发模式时，必须配置 OIDC，不能以无认证状态启动。
 	if c.DevKubeconfig == "" {
@@ -275,6 +285,31 @@ func (c Config) Validate() error {
 		}
 	} else if c.PreviousMasterKeyVersion != 0 {
 		return errors.New("previous_master_key: required when previous_master_key_version is set")
+	}
+	return nil
+}
+
+// validateDatabase 校验引擎取值与连接串协议是否一致。
+// 连接串为空时（仅 dev 模式）不进一步约束，实际连接由 app 决定。
+func validateDatabase(databaseURL, driver string) error {
+	switch driver {
+	case "", "postgres", "mysql":
+	default:
+		return fmt.Errorf("database_driver: unsupported %q (want postgres|mysql)", driver)
+	}
+	if driver == "" || databaseURL == "" {
+		return nil
+	}
+	lowered := strings.ToLower(strings.TrimSpace(databaseURL))
+	detected := ""
+	switch {
+	case strings.HasPrefix(lowered, "postgres://"), strings.HasPrefix(lowered, "postgresql://"):
+		detected = "postgres"
+	case strings.HasPrefix(lowered, "mysql://"):
+		detected = "mysql"
+	}
+	if detected != "" && detected != driver {
+		return fmt.Errorf("database_driver %q conflicts with database_url scheme %q", driver, detected)
 	}
 	return nil
 }

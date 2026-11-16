@@ -13,8 +13,11 @@ STATICCHECK ?= staticcheck
 # 显式包范围：避免扫描 web/node_modules（npm 依赖里可能带 Go 文件）。
 PKGS := ./cmd/... ./internal/...
 COMPOSE := docker compose -f deploy/compose/docker-compose.yml
+COMPOSE_MYSQL := docker compose -f deploy/compose/docker-compose.mysql.yml
+VERSION ?= $(shell sed -n 's/^appVersion:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' deploy/helm/kubedeck/Chart.yaml | head -1)
+PLATFORM ?= linux/amd64
 
-.PHONY: all build web server dev fmt lint test test-db db web-check check web-dev clean test-rules compose-up compose-down compose-config
+.PHONY: all build web server dev fmt lint test test-db test-db-mysql test-db-all db db-mysql web-check check web-dev clean test-rules compose-up compose-down compose-config compose-up-mysql compose-down-mysql compose-config-mysql offline-bundle compose-up-offline
 
 # 本地默认：先检查再构建。CI 使用各自独立的目标。
 all: check build
@@ -59,7 +62,15 @@ test: $(KEEP)
 	$(GO) test $(PKGS)
 
 test-db: $(KEEP)
-	set -a; . ./.testenv/db.env; set +a; $(GO) test ./internal/store/ -v
+	set -a; . ./.testenv/db.env; set +a; $(GO) test ./internal/store/postgres/ -v
+
+test-db-mysql: $(KEEP)
+	set -a; . ./.testenv/mysql.env; set +a; $(GO) test ./internal/store/mysql/ -v
+
+# 同时跑两种引擎：需要 .testenv/db.env 与 .testenv/mysql.env 都已就绪。
+test-db-all: $(KEEP)
+	set -a; . ./.testenv/db.env; . ./.testenv/mysql.env; set +a; \
+		$(GO) test ./internal/store/postgres/ ./internal/store/mysql/ -v
 
 # PrometheusRule 语法与告警触发单元测试（需要 python3 + PyYAML + promtool）。
 test-rules:
@@ -75,8 +86,29 @@ compose-up:
 compose-down:
 	$(COMPOSE) down
 
+# Docker Compose 单机部署（MySQL 8 变体，PG 仍为默认）。
+compose-config-mysql:
+	$(COMPOSE_MYSQL) config
+
+compose-up-mysql:
+	$(COMPOSE_MYSQL) up -d --build
+
+compose-down-mysql:
+	$(COMPOSE_MYSQL) down
+
+# 离线交付：在联网机构建并导出镜像包到 dist/offline。
+offline-bundle:
+	bash scripts/offline-bundle.sh --version $(VERSION) --platform $(PLATFORM)
+
+# 离线部署：使用已导入的镜像启动，不拉取、不构建。
+compose-up-offline:
+	$(COMPOSE) -f deploy/compose/docker-compose.offline.yml up -d --no-build
+
 db:
 	bash scripts/dev-db.sh
+
+db-mysql:
+	bash scripts/dev-db-mysql.sh
 
 web-check:
 	cd $(WEB) && $(NPM) run lint && $(NPM) run typecheck && $(NPM) test

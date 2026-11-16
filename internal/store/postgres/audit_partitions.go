@@ -1,4 +1,4 @@
-package store
+package postgres
 
 import (
 	"context"
@@ -8,9 +8,8 @@ import (
 	"strings"
 
 	"github.com/kubedeck/kubedeck/internal/domain"
+	"github.com/kubedeck/kubedeck/internal/store"
 )
-
-const defaultRetentionDays = 180
 
 // EnsureAuditPartitions 预创建前后若干月的审计分区。
 func (s *Store) EnsureAuditPartitions(ctx context.Context, aheadMonths int) (int, error) {
@@ -72,7 +71,7 @@ func (s *Store) AuditPartitions(ctx context.Context) ([]string, error) {
 func (s *Store) RetentionDays(ctx context.Context) (int, error) {
 	raw, err := s.GetSetting(ctx, domain.SettingAuditRetentionDays)
 	if errors.Is(err, domain.ErrNotFound) {
-		return defaultRetentionDays, nil
+		return store.DefaultRetentionDays, nil
 	}
 	if err != nil {
 		return 0, err

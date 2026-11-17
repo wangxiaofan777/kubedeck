@@ -8,7 +8,7 @@ KubeDeck 的持久化状态只有平台元数据库（PostgreSQL 或 MySQL）：
 |---|---|---|
 | 数据库（PostgreSQL 或 MySQL） | `pg_dump` / `mysqldump` / PITR | 平台元数据与审计 |
 | 主密钥 | Vault/KMS/离线保管 | 丢失后已登记集群凭据无法解密 |
-| Helm values | Git/配置库（不含明文 Secret） | 便于重建 release |
+| Compose 配置（`.env`） | 配置库/密码管理系统（不含明文 Secret） | 便于重建部署 |
 | Secret | 外部 Secret 管理系统 | 数据库密码、OIDC secret、主密钥 |
 
 主密钥与数据库备份必须分开保管：只有数据库备份无法恢复集群凭据；只有主密钥无法恢复元数据。
@@ -34,7 +34,7 @@ mysqldump --single-transaction --routines --triggers --no-tablespaces \
 
 ## 3. 恢复
 
-1. 停止 Kubedeck（缩容到 0），避免恢复期间写入。
+1. 停止 KubeDeck（`docker compose stop kubedeck`），避免恢复期间写入。
 2. 在空库恢复：
 
 ```bash
@@ -51,7 +51,7 @@ mysql -h mysql.example.com -u root -p kubedeck_restore < kubedeck-2026-11-12.sql
 
 3. 确认 `schema_migrations`、`clusters`、`users`、`audit_logs` 行数与备份前一致。
 4. 用原主密钥（或轮换后的当前/上一版本密钥）配置 `KUBEDECK_MASTER_KEY`；先不要更换主密钥。
-5. 启动一个副本，检查 `/readyz`、登录、集群列表与一条凭据读取。
+5. 启动应用（`docker compose start kubedeck`），检查 `/readyz`、登录、集群列表与一条凭据读取。
 6. 校验审计哈希链：
 
 ```bash
@@ -78,7 +78,7 @@ recovery_target_time = '2026-11-12 21:00:00+08'
 - 生产使用 Vault/KMS，启用审计与双人审批。
 - 离线副本放在受控保险柜，至少两份、异地保存。
 - 轮换时保留上一版本密钥直到所有凭据重新加密。
-- 禁止把主密钥写入 Helm values 文件、CI 变量日志或工单。
+- 禁止把主密钥写入 `.env` 副本、CI 变量日志或工单。
 
 ## 6. 演练
 

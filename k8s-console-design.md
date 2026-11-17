@@ -98,7 +98,7 @@ MVP 必须覆盖的 8 个场景：
 | 终端 | xterm.js | 配合后端 exec 流 |
 | 图表 | ECharts | 资源趋势、拓扑 |
 | 图表库 | @xyflow/react | 资源关系拓扑（V2） |
-| 部署 | Helm Chart + 容器镜像 | 平台自身也跑在 K8S 上 |
+| 部署 | Docker Compose + 容器镜像 | 平台以单实例运行，前面接 HTTPS 反向代理 |
 
 > 关键决策：**后端不引入 ORM**。用 sqlc 或 squirrel 生成/拼 SQL，DDL 走 migrate 工具。表少（约 10 张），ORM 带来的隐式行为弊大于利。
 
@@ -171,7 +171,7 @@ graph TB
 1. **All-in-One**：`go:embed` 把前端 `dist` 打进二进制，单容器部署，适合内网小团队。
 2. **前后端分离**：前端走 CDN/Nginx，后端纯 API，适合大团队与多环境。
 
-平台自身以 Helm Chart 部署在业务集群的独立 namespace（如 `kubedeck-system`），副本数 ≥2，无需 leader election 处理 API 请求；后台任务（健康巡检、缓存清理）用 Lease 选主。
+平台自身以单个容器镜像交付，通过 Docker Compose 单机部署；登录会话、后台任务与 WebSocket 连接都在进程内，固定单实例。多副本、Lease 选主与 Kubernetes 原生部署属于后续演进，需要先引入共享会话存储。
 
 ---
 
@@ -754,6 +754,8 @@ CREATE TABLE operation_templates (
 ---
 
 ## 10. 部署方案
+
+> 当前实现为单实例 Docker Compose 部署（应用 + PostgreSQL，HTTPS 由前置代理终止），见 [docs/deployment.md](docs/deployment.md)。以下 §10.2–§10.3 保留为多副本与托管数据库的后续演进方向，不代表当前交付形态。
 
 ### 10.1 依赖组件
 

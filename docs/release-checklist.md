@@ -22,9 +22,9 @@
 - [ ] SSRF：`http://` 与 `169.254.0.0/16` 登记被拒绝。
 - [ ] CSP 响应头存在，且没有 `unsafe-eval`；生产 `style-src` 的 `unsafe-inline` 已记录为已知限制。
 - [ ] `/metrics` 只在内网暴露。
-- [ ] 生产 `cookie_insecure=false`，入口 HTTPS。
-- [ ] `dev.enabled=false`，没有挂载开发 kubeconfig。
-- [ ] Secret 的 K8s RBAC 已按命名空间最小化。
+- [ ] 生产 `KUBEDECK_COOKIE_INSECURE=false`，入口 HTTPS。
+- [ ] 没有启用开发模式或挂载开发 kubeconfig。
+- [ ] `.env` 权限为 `0600`，没有被提交。
 
 ## 3. 数据库与迁移
 
@@ -36,16 +36,13 @@
 
 ## 4. 部署
 
-- [ ] `helm lint --strict` 通过。
-- [ ] `helm template` 默认值与全可选组件（Ingress/PDB/HPA/NetworkPolicy/ServiceMonitor）均无报错。
-- [ ] `helm template --kube-version 1.18.16` 生成 PDB `policy/v1beta1`、HPA `autoscaling/v2beta2`、Ingress `networking.k8s.io/v1beta1`；`--kube-version 1.37.0` 仍生成现代版本。
+- [ ] `docker compose -f deploy/compose/docker-compose.yml config` 渲染通过。
+- [ ] 镜像构建成功，tag 不可变（digest 或唯一版本），没有使用 `latest`。
+- [ ] 目标机已导入 `kubedeck` 与 `postgres:17-alpine` 镜像（内网环境）。
+- [ ] 前置 HTTPS 反向代理可用：WebSocket `Upgrade` 透传、响应缓冲关闭、空闲超时 > 90s。
+- [ ] 应用只绑定 `127.0.0.1:8080`；8080/5432 未对公网开放。
+- [ ] 单实例部署，没有使用 `--scale` 或其它扩容配置。
 - [ ] `KUBEDECK_TEST_LEGACY_KUBECONFIG=<1.18 kubeconfig> go test ./internal/kube/ -run Legacy` 通过（1.18 未覆盖时记录原因）。
-- [ ] `kubectl apply --dry-run=server` 通过。
-- [ ] 镜像 tag 不可变（digest 或唯一版本），没有使用 `latest`。
-- [ ] 资源 requests/limits、PDB、HPA 与副本数符合容量评估。
-- [ ] 多副本部署已配置会话亲和；否则保持单副本。
-- [ ] NetworkPolicy 放行数据库、目标 apiserver 与 DNS。
-- [ ] Ingress 超时支持 WebSocket（空闲超时 > 90s）。
 
 ## 5. 功能验收
 
@@ -63,21 +60,20 @@
 ## 6. 可观测性
 
 - [ ] `/metrics` 可抓取，`kubedeck_cluster_up`、列表延迟、WS 连接数、审计队列有数据。
-- [ ] 告警规则已加载，测试环境可触发至少一条并恢复。
+- [ ] 监控系统已接入内网抓取；告警阈值由部署方按自己的监控栈配置。
 - [ ] 日志为结构化 JSON，带 requestId；不记录请求体与凭据。
 - [ ] 仪表盘包含 5xx、列表 P95、WS 连接/重同步、审计积压。
 
 ## 7. 发布与回滚演练
 
-- [ ] 在预生产完成一次 `helm upgrade` 与一次 `helm rollback`。
+- [ ] 在预生产完成一次 `docker compose up -d` 升级与一次切回旧 tag 的回滚。
 - [ ] 回滚后登录、浏览、写操作、审计均正常。
-- [ ] 发布窗口与值班人确认；变更记录包含镜像 digest、chart 版本、迁移列表。
+- [ ] 发布窗口与值班人确认；变更记录包含镜像 digest、Compose 配置版本、迁移列表。
 - [ ] 发布后 30 分钟观察 5xx、P95、WS、审计队列与集群健康。
 
 ## 8. 留档
 
 - 发布版本：
-- Chart 版本：
 - 镜像 digest：
 - 迁移版本：
 - 执行人/时间：

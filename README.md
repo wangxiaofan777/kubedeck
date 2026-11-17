@@ -17,7 +17,7 @@ MVP 功能已完成并通过本地 k3s 端到端验收（2026-11-12）：
 | 日志与实时 | 多容器日志、跟随/暂停/过滤；WebSocket 多路复用、续传/resync |
 | 审计 | 异步写入、哈希链校验、查询与 CSV/JSON 导出 |
 | 控制台 | 深链接、权限组件、虚拟滚动、全局搜索、空/错/降级态 |
-| 部署 | Helm Chart、Docker Compose 单机部署、最小权限 SA、Prometheus 指标与告警、运维/备份/发布文档 |
+| 部署 | Docker Compose 单机部署、最小权限 SA、Prometheus 指标、运维/备份/发布文档 |
 
 完整任务进度见 [`openspec/changes/archive/2026-11-13-add-kubedeck-mvp/tasks.md`](openspec/changes/archive/2026-11-13-add-kubedeck-mvp/tasks.md)。
 
@@ -49,32 +49,18 @@ wsl.exe -d Ubuntu -u root -- bash -lc '
 
 ### Docker Compose（单机）
 
-不依赖 Kubernetes 的单机部署：
+唯一的部署方式：
 
 ```bash
 cd deploy/compose
 cp .env.example .env && chmod 600 .env
-# 填写域名、数据库密码、主密钥与 OIDC 配置
+# 填写数据库密码、主密钥与 OIDC 配置
 docker compose up -d --build
 ```
 
-完整步骤、集群接入与网络说明见 [deploy/compose/README.md](deploy/compose/README.md)。应用固定单副本；多副本/高可用请使用 Helm。
+应用固定单实例，前面需要一个终止 HTTPS 的反向代理。完整步骤（OIDC、管理员引导、集群接入、备份、升级、排障）见 [docs/deployment.md](docs/deployment.md)。
 
-MySQL 8 变体使用独立清单与环境示例：
-
-```bash
-cd deploy/compose
-cp .env.mysql.example .env && chmod 600 .env
-docker compose -f docker-compose.mysql.yml up -d --build
-```
-
-MySQL 部署需要开启 `log_bin_trust_function_creators=1`（审计只追加触发器），Compose 清单已内置该启动参数。
-
-### 离线 / 内网部署
-
-目标机不能访问 Docker Hub、npm 或 Go 模块代理时，在联网机执行 `make offline-bundle`（或 `bash scripts/offline-bundle.sh`）构建并导出镜像包，目标机校验后 `./load-images.sh` 导入。应用镜像约 68 MB，gzip 后约 16 MB；完整 Compose 包（含 PostgreSQL 与 Caddy）约 157 MB。需要随包携带 MySQL 8 时加 `--with-mysql`。
-
-完整流程（镜像导入、Compose/Helm、内网 TLS 与 OIDC）见 [docs/offline-deployment.md](docs/offline-deployment.md)。
+MySQL 8 仍受后端支持：把 `KUBEDECK_DATABASE_URL` 指向外部 MySQL 并设置 `KUBEDECK_DB_DRIVER=mysql`，做法见部署手册 §7.3。
 
 ## 目录结构
 
@@ -92,9 +78,7 @@ MySQL 部署需要开启 `log_bin_trust_function_creators=1`（审计只追加�
 │   ├── metrics/                 # Prometheus 指标
 │   └── store/                   # 仓储契约与 PostgreSQL/MySQL 实现
 ├── web/                         # React 控制台
-├── deploy/helm/kubedeck/        # Helm Chart
-├── deploy/compose/              # Docker Compose 单机部署（应用 + PostgreSQL/MySQL + Caddy）
-├── deploy/prometheus/           # 告警规则
+├── deploy/compose/              # Docker Compose 单机部署（应用 + PostgreSQL）
 ├── docs/                        # 部署、运维、备份、安全、发布文档
 ├── verify/                      # 三项技术验证程序
 └── openspec/                    # 规格、设计与任务
@@ -122,7 +106,7 @@ MySQL 部署需要开启 `log_bin_trust_function_creators=1`（审计只追加�
 - **前端**：React 18、TypeScript、Ant Design 5、TanStack Query 5、Monaco、Vite 5
 - **存储**：PostgreSQL 15+（默认）或 MySQL 8.0.20+，通过 `KUBEDECK_DATABASE_URL` + `KUBEDECK_DB_DRIVER` 选择；集群资源状态不入库
 - **授权**：Impersonation 透传 + Kubernetes 原生 RBAC
-- **部署**：单二进制（前端 `go:embed`）+ Docker + Helm / Docker Compose
+- **部署**：单二进制（前端 `go:embed`）+ Docker + Docker Compose
 - **可观测性**：Prometheus `/metrics`、结构化日志、哈希链审计
 
 ## 测试与质量
@@ -154,12 +138,11 @@ openspec view
 | 文档 | 内容 |
 |---|---|
 | [k8s-console-design.md](k8s-console-design.md) | 产品级设计总纲（架构、API、错误码、容量估算） |
-| [docs/deployment.md](docs/deployment.md) | 生产部署、OIDC、最小权限 SA、主密钥轮换 |
+| [docs/deployment.md](docs/deployment.md) | 部署手册：Compose、OIDC、最小权限 SA、数据库与升级 |
 | [docs/operations.md](docs/operations.md) | 升级/回滚/故障处理/容量 |
 | [docs/backup-restore.md](docs/backup-restore.md) | PostgreSQL / MySQL 备份、恢复与演练 |
 | [docs/permission-matrix.md](docs/permission-matrix.md) | 平台角色 × 操作 × Kubernetes 权限 |
 | [docs/security-review.md](docs/security-review.md) | 安全自查结论与残余风险 |
-| [docs/alerting.md](docs/alerting.md) | Prometheus 指标与告警规则 |
 | [docs/release-notes.md](docs/release-notes.md) | 版本说明与兼容矩阵 |
 | [docs/release-checklist.md](docs/release-checklist.md) | 发布检查单 |
 | [docs/openapi.yaml](docs/openapi.yaml) | OpenAPI 3 文档（测试保证与路由一致） |

@@ -55,25 +55,6 @@
 - **WHEN** 目标集群提供 `batch/v1` CronJob 与 `networking.k8s.io/v1` Ingress
 - **THEN** 系统 SHALL 保持使用 v1 版本，MUST NOT 降级到 beta 版本
 
-### Requirement: 兼容的部署清单
-
-平台 Helm Chart SHALL 允许安装到 Kubernetes 1.18+。对 1.18 不提供的资源版本，Chart SHALL 按集群版本渲染兼容版本；对 1.18 不支持的 Pod 字段，Chart SHALL 在显式配置时失败并说明原因，MUST NOT 静默生成无效清单。
-
-#### Scenario: 在 1.18 上渲染
-
-- **WHEN** 使用 `--kube-version 1.18.16` 渲染启用了 PDB、HPA 与 Ingress 的 Chart
-- **THEN** 输出的 PDB SHALL 使用 `policy/v1beta1`，HPA SHALL 使用 `autoscaling/v2beta2`，Ingress SHALL 使用 `networking.k8s.io/v1beta1` 与旧 backend 结构
-
-#### Scenario: 在新版本上渲染
-
-- **WHEN** 使用 `--kube-version 1.37.0` 渲染同一 Chart
-- **THEN** 输出 SHALL 保持 `policy/v1`、`autoscaling/v2` 与 `networking.k8s.io/v1`
-
-#### Scenario: 1.18 上配置不支持的字段
-
-- **WHEN** 在 1.18 上显式配置 `topologySpreadConstraints`
-- **THEN** 渲染 SHALL 失败并指出该字段要求 Kubernetes 1.19+
-
 ### Requirement: 兼容性验证
 
 遗留版本兼容性 MUST 通过真实 1.18 集群验证，覆盖发现、资源增删改查、watch、扩缩容与驱逐；现有 1.34/1.37 路径 MUST 保持回归通过。缺少 1.18 环境时本地测试 MAY 跳过，但发布检查 MUST 记录实际执行结果。
